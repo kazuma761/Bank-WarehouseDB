@@ -324,6 +324,7 @@ container reaches it at `host.docker.internal`. CPU-only hosts can run one model
 | *per source* `url_env` | e.g. `BANKQL_FINANCIAL_URL`, `BANKQL_DEMO_URL`, `BANKQL_PG_URL`, `BANKQL_BIRD_URL`, `BANKQL_TRINO_URL` |
 | `BANKQL_PG_ADMIN_URL` | fixture loading only (`scripts/make_fixture.py`) |
 | `BANKQL_PG_ADMIN_PASSWORD`, `BANKQL_PG_RO_PASSWORD` | docker-compose Postgres init |
+| `BANKQL_MCP_API_KEY` | MCP server only: the key whose policy applies; MCP `run_sql` exists only if that key has `run_sql: true` |
 | `BANKQL_MERCER_LOG_LEVEL` | Mercer log level (default `WARNING`) |
 | `BANKQL_MERCER_GPU_KERNELS` | `1` = allow Mercer's torch/triton kernels (GPU host only) |
 | `BANKQL_DEMO_MODE`, `BANKQL_PORT`, `BANKQL_BIND`, `REGISTRY` | demo script / compose / Docker build |

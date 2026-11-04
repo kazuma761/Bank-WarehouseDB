@@ -80,7 +80,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "duckdb" },
+    { name = "duckdb", specifier = "==2.0.0" },
     { name = "duckdb-engine" },
     { name = "fastapi" },
     { name = "httpx" },

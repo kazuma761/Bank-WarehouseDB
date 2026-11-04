@@ -7,7 +7,7 @@ license = { text = "MIT" }
 dependencies = [
   "sqlglot",
   "sqlalchemy[asyncio]",
-  "duckdb",
+  "duckdb==2.0.0",          # exact: extension binaries (sqlite/postgres scanner) are built per DuckDB version
   "duckdb-engine",
   "psycopg[binary]",
   "rapidfuzz",

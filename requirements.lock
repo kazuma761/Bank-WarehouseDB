@@ -35,6 +35,8 @@ duckdb-engine==0.17.0
     # via bankql
 fastapi==0.162.0
     # via bankql
+greenlet==3.5.6
+    # via sqlalchemy
 h11==0.16.0
     # via
     #   httpcore

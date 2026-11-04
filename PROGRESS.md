@@ -6,34 +6,46 @@ Running log. Acceptance gates live in `GATES.md` (checked with
 
 ## Status
 
+### Round 2 (2026-11-04: E, F, B, D, C + decisions)
+
+| Item | State |
+|---|---|
+| Push to `kazuma761/Bank-WarehouseDB` branch `bankql` | **blocked** — git proxy 403: Claude GitHub App not installed for `kazuma761`; full history sent to the owner as `bankql.bundle` |
+| E. `/demo` page + `scripts/demo.sh` / `.ps1` | done — browser-checked (3 cards, follow-up rewritten, no console errors) |
+| F. `docs/CONNECT.md` + `bankql check-source` / `init-source` / `hash-key` | done — check-source PASS on 3 DBs, FAIL on the writable admin role (inspected, no writes) |
+| B. `eval/chat_smoke.py` (31 conversations, 34 turns, `/v1/ask` only) | done on FakeLLM — 34/34 as expected; real-model run waits for models |
+| D. Security hardening + `tests/security` (50 tests) + `docs/SECURITY.md` | done — all pass; residual risks listed (differencing attacks on counts first) |
+| C. Latency: spans, LLM stats, optimisations, `eval/latency.py`, `docs/LATENCY.md` | done on FakeLLM — mean 40.9 → 11.2 ms, analytics LLM calls 5.2 → 1.87; no native rewrite warranted |
+| SQLAS advisory only | done — enforcement = validator + PII lineage + small-count rule + our output check |
+| Docker: ECR base image as build ARG | written; **build blocked** — ECR layers come from `d2glxqk2uabbnd.cloudfront.net` (proxy: Forbidden) |
+| DuckDB pinned (`duckdb==2.0.0`) | done |
+| Gemma GGUF | configured: `unsloth/gemma-3-12b-it-GGUF` / `gemma-3-12b-it-Q4_K_M.gguf` (owner's fallback) |
+| A. Real BIRD data | **blocked** — `bird-bench.oss-cn-beijing.aliyuncs.com` still denied (re-checked 2026-11-04) |
+| MCP / OpenAI-compatible | frozen as asked; tests green; MCP `run_sql` off by default |
+
+Test suite: **543 passed, 1 skipped** (the skip = DuckDB-extension federation blocker).
+
+### Round 1 (steps 1–9)
+
 | Step (2026-11-04 plan) | State |
 |---|---|
 | 1. Skeleton, git, SPEC.md | done |
-| 2. Mercer pinned + read; SQLAS read; differences noted | done — `docs/THIRD_PARTY.md` (8 SQLAS + 8 Mercer differences) |
+| 2. Mercer pinned + read; SQLAS read; differences noted | done — `docs/THIRD_PARTY.md` |
 | 3. Synthetic fixture → SQLite / DuckDB / Postgres | done — 9 tables, 5,916 rows, counts match in all three |
-| 4. Phase 2 core | done, **except** SQLite⋈Postgres federation: blocked (DuckDB extensions, see Blockers) |
-| 5. Semantic YAML + Mercer mappings adapter | done — accepted by ported SemanticMapper on all 3 DBs |
-| 6. AnalyticsEngine + Mercer adapter (fast/full) on FakeLLM | done — our validator runs inside Mercer's executor; no torch/triton import |
-| 7. Python lib, REST, MCP, OpenAI-compatible endpoint | done — e2e on FakeLLM; real servers start; **Docker image build untested** (Docker Hub 429) |
-| 8. Resumable eval harness + metrics + SQLAS hooks | done — our BIRD EX = official `calculate_ex` on 9 edge cases |
-| 9. llama-cpp-python[server] builds from PyPI | done — 0.3.16, built in 1m31s, in `.venv-llama` |
+| 4. Phase 2 core | done, **except** SQLite⋈Postgres federation: blocked (DuckDB extensions) |
+| 5. Semantic YAML + Mercer mappings adapter | done |
+| 6. AnalyticsEngine + Mercer adapter (fast/full) on FakeLLM | done |
+| 7. Python lib, REST, MCP, OpenAI-compatible endpoint | done |
+| 8. Resumable eval harness + metrics + SQLAS hooks | done |
+| 9. llama-cpp-python[server] builds from PyPI | done — 0.3.16 in `.venv-llama` |
 
-Test suite: **438 passed, 1 skipped** (10 consecutive clean runs after the pool fix) (`.venv/bin/python -m pytest`), against real SQLite, DuckDB and
-PostgreSQL 16 with `FakeLLM`. The skip is the federation blocker below. No real-model test has run yet.
+## Blockers needing the owner
 
-## Blockers needing an owner decision
-
-1. **DuckDB federation of SQLite/Postgres members.** `ATTACH … (TYPE sqlite|postgres)` needs DuckDB's
-   `sqlite_scanner` / `postgres_scanner` extensions, downloaded from `extensions.duckdb.org`, which this
-   session's network policy denies. Code, config and validation are done (`bankql/connectors/federation.py`;
-   cross-member validation is tested; DuckDB-file members attach natively and are tested). Options:
-   (a) allow `extensions.duckdb.org`; (b) approve the third-party PyPI repackaging
-   `duckdb-extension-sqlite-scanner` / `-postgres-scanner` (santosh-d3vpl3x — I have not adopted it:
-   unreviewed native binaries); (c) approve a fallback that copies member tables into DuckDB.
-   Until then `tests/test_federation.py::test_sqlite_joined_to_postgres` skips with the reason.
-2. **Docker image build untested.** `docker build` failed with `429 Too Many Requests` from Docker Hub
-   pulling `python:3.12-slim`. `Dockerfile`, `docker-compose.yml`, `scripts/pg_init.sh` are written but
-   unverified.
+1. **GitHub push:** install the Claude GitHub App for `kazuma761` (https://claude.ai/connect-github). Until then:
+   `git clone -b bankql bankql.bundle bankql && cd bankql && git push -u https://github.com/kazuma761/Bank-WarehouseDB bankql`.
+2. **Network (session still denies):** `huggingface.co` (+ `cdn-lfs.huggingface.co`, `cas-bridge.xethub.hf.co`),
+   `bird-bench.oss-cn-beijing.aliyuncs.com`, `extensions.duckdb.org`, and for Docker
+   `d2glxqk2uabbnd.cloudfront.net` (ECR layer CDN). Allowed-domain changes apply to new sessions.
 
 ## Log
 
@@ -109,3 +121,13 @@ Each item says exactly what unblocks it.
    (library, REST, MCP, OpenAI-compatible) and map it to database roles so row-level security applies per
    person.
 9. **Federation + Docker** — see Blockers above.
+10. **Offline / on-prem DuckDB extensions.** For installs without internet, ship the `sqlite_scanner` and
+    `postgres_scanner` extension files built for the pinned DuckDB (2.0.0, `linux_amd64` / `windows_amd64`), e.g. in
+    `vendor/duckdb_extensions/v2.0.0/<platform>/`, and load them with `SET extension_directory = …` or
+    `INSTALL '<path>.duckdb_extension'` before `ATTACH`. Keep signature checking on; bump the files with every DuckDB pin.
+11. **Real-model runs of B and C.** `eval/chat_smoke.py --url http://127.0.0.1:8000 --key $KEY` and the
+    `AskResult.llm_calls` token / prefill / decode numbers; compare `sql.link_schema: always` vs `auto` for the
+    KV-cache effect; tune `sql.max_tokens` (768) against truncated Arctic answers.
+12. **Small-count rule follow-ups:** query budgets or DP noise for PII-filtered counts (differencing attacks);
+    lineage-aware output check so CTE-wrapped counts are not falsely refused (docs/SECURITY.md).
+13. **Scale-out:** move the rate limiter and sessions to Redis before running more than one API worker.
