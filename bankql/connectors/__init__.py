@@ -3,6 +3,7 @@ no other execution path. SQLite, DuckDB and PostgreSQL are implemented and teste
 (MySQL, SQL Server, Oracle, Snowflake, BigQuery, Trino) work with their driver + config — see README."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -93,6 +94,7 @@ class Source:
         self.name, self.cfg, self.semantic, self.guard = name, cfg, semantic, guard
         self.dialect = SQLGLOT_DIALECT.get(cfg.dialect, cfg.dialect)
         self._row_estimates: dict[str, int] = {}
+        self._validated: dict[tuple[str, bool], Validation] = {}
         self._lock = threading.Lock()
 
     # ----------------------------------------------------------------------------------- connection
@@ -223,8 +225,17 @@ class Source:
     # ----------------------------------------------------------------------------------- execution
 
     def validate(self, sql: str, *, allow_pii_output: bool = False) -> Validation:
+        """Memoised per (sql, allow_pii_output): validation is deterministic for a given catalog, and one request
+        validates the same SQL several times (sandbox, export, legend, plausibility). Callers get a copy."""
         with perf.span("validation"):
-            return self.validator.validate(sql, allow_pii_output=allow_pii_output)
+            key = (sql, allow_pii_output)
+            v = self._validated.get(key)
+            if v is None:
+                v = self.validator.validate(sql, allow_pii_output=allow_pii_output)
+                if len(self._validated) >= 512:  # shortcut: drop-all bound instead of LRU; fine at this size
+                    self._validated.clear()
+                self._validated[key] = v
+            return dataclasses.replace(v, tables=list(v.tables), warnings=list(v.warnings), count_columns=list(v.count_columns))
 
     def _checked(self, sql: str, allow_pii_output: bool) -> Validation:
         v = self.validate(sql, allow_pii_output=allow_pii_output)

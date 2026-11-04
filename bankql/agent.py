@@ -293,7 +293,7 @@ class Agent:
             try:
                 src.catalog, src.as_of()
                 if hasattr(self.engine, "schema_for") and not hasattr(src, "members"):
-                    self.engine.schema_for(src)
+                    self.engine._retriever(src, self.engine.schema_for(src))  # builds Mercer's BM25/LSH index too
             except Exception:  # noqa: BLE001 — an unavailable source must not stop start-up
                 pass
 

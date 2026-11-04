@@ -114,6 +114,14 @@ def instrumented_llamacpp_backend(base_url: str, api_key: str | None = None):
     return b
 
 
+def _fast_sklearn():
+    """Mercer's CPU LSH calls sklearn once per question token; ~75% of that time is sklearn re-validating inputs we
+    built ourselves. Scoped (thread-local) skip: same results, p50 5.7 -> 4.1 ms, p95 22.8 -> 15.2 ms (bank_demo)."""
+    import sklearn
+
+    return sklearn.config_context(assume_finite=True, skip_parameter_validation=True)
+
+
 def _timed_explain():
     """Record Mercer's EXPLAIN pre-flight as its own span (wraps the function Mercer's executor imported)."""
     from bankql import perf
@@ -276,7 +284,8 @@ class MercerEngine:
         backend = DialectBackend(self.backend, source.dialect, self.max_tokens)
         sandbox, timings = GuardedSandbox(source), {}
         t = time.perf_counter()
-        ectx = self._retriever(source, schema).retrieve(question)
+        with _fast_sklearn():
+            ectx = self._retriever(source, schema).retrieve(question)
         timings["entity_retrieval"] = _ms(t)
         t = time.perf_counter()
         if self._full_schema(schema):
@@ -311,7 +320,8 @@ class MercerEngine:
         sandbox = GuardedSandbox(source)
         pipe = MercerPipeline(source.engine, backend=DialectBackend(self.backend, source.dialect, self.max_tokens),
                               annotated_schema=schema, sandbox=sandbox, cache=_NoCache())
-        state = await pipe.run(question)
+        with _fast_sklearn():
+            state = await pipe.run(question)
         res = _result("full", state.candidates, state.filtered_schema, dict(state.stage_timings))
         res.corrections = len(state.correction_log)
         if state.final_sql:

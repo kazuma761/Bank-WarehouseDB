@@ -82,7 +82,7 @@ CONVERSATIONS: list[dict] = [
 
 # ------------------------------------------------------------------------------------------- fake stack
 
-def fake_agent():
+def fake_agent(*, link_schema: str = "auto", verified=None, **agent_kw):
     """Agent on the real fixture DBs with FakeLLM scripted from CONVERSATIONS."""
     from bankql import Agent
     from bankql.analytics import MercerEngine
@@ -107,8 +107,11 @@ def fake_agent():
         prompt = messages[-1]["content"].lower()
         return next((v for k, v in sqls.items() if k.lower() in prompt), "SELECT 1")
     fake_sql = mercer_fake(sqls, fix=fix)
+    if verified is None:
+        cfg.agent.verified_cache = False  # smoke runs must not depend on (or fill) the persistent cache
     return Agent(cfg, router_llm=agent_fake(routes, rewrites=rewrites, summary="Here are the results."),
-                 engine=MercerEngine(fake_sql, mode="fast", work_dir=ROOT / "data/mercer"))
+                 engine=MercerEngine(fake_sql, mode="fast", work_dir=ROOT / "data/mercer", link_schema=link_schema),
+                 verified=verified, **agent_kw)
 
 
 def serve_fake(port: int | None = None) -> tuple[str, str, object]:
