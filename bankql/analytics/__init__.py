@@ -251,6 +251,8 @@ def build_engine(cfg, backend=None) -> MercerEngine:
         from bankql.analytics.mercer.inference.llamacpp_backend import LlamaCppBackend
 
         backend = LlamaCppBackend(base_url=cfg.sql.url().removesuffix("/v1"))
+        if cfg.sql.api_key():  # Mercer's backend has no auth option; its httpx client takes default headers
+            backend._client.headers["Authorization"] = f"Bearer {cfg.sql.api_key()}"
     cache = None
     try:
         from bankql.analytics.mercer.schema.cache import SchemaCache

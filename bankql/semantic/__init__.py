@@ -46,11 +46,15 @@ class SemanticModel(BaseModel):
     def pii_columns(self) -> set[tuple[str, str]]:
         return {(t.lower(), c.lower()) for t, tab in self.tables.items() for c, col in tab.columns.items() if col.pii}
 
-    def legend(self, columns: list[str]) -> dict[str, dict[str, str]]:
-        """Code meanings for result columns that hold coded values (e.g. PRIJEM -> credit)."""
+    def legend(self, columns: list[str], tables: list[str] | None = None) -> dict[str, dict[str, str]]:
+        """Code meanings for result columns that hold coded values (e.g. PRIJEM -> credit), looked up only in the
+        *tables* the query read (trans.type, disp.type and card.type are different codes)."""
         out: dict[str, dict[str, str]] = {}
+        names = {t.split(".")[-1].lower() for t in tables} if tables is not None else None
         for col in columns:
-            for tab in self.tables.values():
+            for tname, tab in self.tables.items():
+                if names is not None and tname.lower() not in names:
+                    continue
                 c = tab.column(col)
                 if c and c.valid_values:
                     out.setdefault(col, {}).update(c.valid_values)

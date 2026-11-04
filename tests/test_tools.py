@@ -64,3 +64,8 @@ def test_order_template_quoting_per_dialect():
     assert "`order`" in template_sql("get_orders", "mysql")
     assert "[order]" in template_sql("get_orders", "tsql")
     assert '"order"' in template_sql("get_orders", "sqlite") and ":account_id" in template_sql("get_orders", "duckdb")
+
+
+def test_legend_only_from_tables_the_query_reads(tools):
+    st = tools.get_statement(3).legend["type"]
+    assert st["PRIJEM"] == "credit" and "OWNER" not in st and "gold" not in st  # trans.type only

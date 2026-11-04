@@ -98,7 +98,7 @@ class LookupTools:
     def _run(self, tool: str, key: str, params: dict, *, pii: bool = False, notes=None) -> ToolResult:
         r: QueryResult = self.source.run(self._sql[key], params, allow_pii_output=pii)
         return ToolResult(tool, r.sql, params, r.columns, r.rows, r.truncated, list(notes or []) + r.warnings,
-                          self.source.semantic.legend(r.columns), r.elapsed_ms)
+                          self.source.semantic.legend(r.columns, r.tables), r.elapsed_ms)
 
     def get_client(self, client_id) -> ToolResult:
         cid = _pos_int(client_id, "client_id")

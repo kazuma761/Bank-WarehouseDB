@@ -99,7 +99,8 @@ class Agent:
         self.sources = sources or build_sources(cfg, self.guard)
         self.sources.update({k: v for k, v in build_federations(cfg, self.sources).items() if k not in self.sources})
         self.router = Router(router_llm or OpenAICompatClient(cfg.router.url(), cfg.router.model, cfg.router.timeout_s,
-                                                              cfg.router.structured_output), use_logprobs=cfg.router.logprobs)
+                                                              cfg.router.structured_output, cfg.router.api_key()),
+                             use_logprobs=cfg.router.logprobs)
         if engine is None:
             from bankql.analytics import build_engine
 
@@ -134,6 +135,7 @@ class Agent:
 
     def ask(self, question: str, source: str | None = None, session_id: str | None = None, *,
             history: list[dict] | None = None, evidence: str | None = None, surface: str = "library",
+            user_id: str | None = None,
             on_event: Callable[[str, dict], None] | None = None) -> AskResult:
         t0 = time.perf_counter()
         source = source or next(iter(self.cfg.sources))
@@ -192,7 +194,7 @@ class Agent:
         res.timings_ms["total"] = round((time.perf_counter() - t0) * 1000, 1)
         emit("done", {"status": res.status})
         self.sessions.add(session_id, question, res.summary)
-        self.audit.write(request_id=res.request_id, session_id=session_id, surface=surface, source=source,
+        self.audit.write(request_id=res.request_id, session_id=session_id, user_id=user_id, surface=surface, source=source,
                          question=question, standalone_question=res.standalone_question, route=res.route,
                          intent=",".join(res.intent), sql=res.sql, row_count=res.row_count,
                          latency_ms=res.timings_ms["total"], refused=res.status != "ok",
@@ -283,13 +285,17 @@ class Agent:
             raise _Refuse(f"{NOT_SURE} — the query could not be run safely ({e}).") from e
         rows = [[jsonable(v) for v in r] for r in exp.preview]
         res.results = [ResultSet(name="analytics", sql=ar.sql, columns=exp.columns, rows=rows, row_count=exp.rows,
-                                 truncated=exp.truncated, export_id=exp.id, legend=src.semantic.legend(exp.columns))]
+                                 truncated=exp.truncated, export_id=exp.id,
+                                 legend=src.semantic.legend(exp.columns, src.validate(ar.sql).tables))]
         res.columns, res.rows, res.row_count, res.export_id = exp.columns, rows, exp.rows, exp.id
         emit("execute", {"row_count": exp.rows})
         if exp.rows == 0:
             raise _Refuse(f"{NOT_SURE} — the query returned no rows, which may mean it misread the question. "
                           f"SQL used: {ar.sql}")
         used = set(src.validate(ar.sql).tables)
+        if not used:  # e.g. a "correction" to SELECT 1: valid SQL that cannot answer a data question
+            raise _Refuse(f"{NOT_SURE} — the generated query does not read any table, so it can't answer this. "
+                          f"SQL: {ar.sql}")
         biggest = max((src.estimate_rows(m) for (q, n), m in src.catalog.tables.items()
                        if (f"{q}.{n}" if q else n) in used), default=0)
         if biggest and exp.rows > biggest:

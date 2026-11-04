@@ -11,9 +11,9 @@ import duckdb
 _DDL = """CREATE TABLE IF NOT EXISTS audit_log (
     ts TIMESTAMP, request_id VARCHAR, session_id VARCHAR, surface VARCHAR, source VARCHAR,
     question VARCHAR, standalone_question VARCHAR, route VARCHAR, intent VARCHAR, sql VARCHAR,
-    row_count BIGINT, latency_ms DOUBLE, refused BOOLEAN, refusal_reason VARCHAR, warnings VARCHAR)"""
+    row_count BIGINT, latency_ms DOUBLE, refused BOOLEAN, refusal_reason VARCHAR, warnings VARCHAR, user_id VARCHAR)"""
 COLUMNS = ["ts", "request_id", "session_id", "surface", "source", "question", "standalone_question", "route",
-           "intent", "sql", "row_count", "latency_ms", "refused", "refusal_reason", "warnings"]
+           "intent", "sql", "row_count", "latency_ms", "refused", "refusal_reason", "warnings", "user_id"]
 
 
 class AuditLog:
@@ -23,13 +23,14 @@ class AuditLog:
         self._lock = threading.Lock()
         self._con = duckdb.connect(str(self.path))
         self._con.execute(_DDL)
+        self._con.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_id VARCHAR")  # older audit files
 
     def write(self, **row) -> None:
         row = {c: row.get(c) for c in COLUMNS}
         row["ts"] = row["ts"] or datetime.now(timezone.utc).replace(tzinfo=None)  # naive UTC (TIMESTAMPTZ needs pytz)
         row["warnings"] = json.dumps(row["warnings"] or [])
         with self._lock:
-            self._con.execute(f"INSERT INTO audit_log VALUES ({', '.join('?' * len(COLUMNS))})",
+            self._con.execute(f"INSERT INTO audit_log ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
                               [row[c] for c in COLUMNS])
 
     def recent(self, n: int = 20) -> list[dict]:

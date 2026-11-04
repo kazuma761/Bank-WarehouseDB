@@ -157,3 +157,10 @@ def test_model_server_down_is_a_clear_error(make_agent, src):
     r = a.ask("show client 12's accounts", source=src.name)
     assert r.status == "error" and "not reachable" in r.refusal_reason
     assert a.audit.recent(1)[0]["route"] == "error"
+
+
+def test_query_reading_no_table_is_refused(make_agent, src):
+    """A 'correction' to SELECT 1 is valid SQL but cannot answer a data question."""
+    a = make_agent(agent_fake({"transactions": route("analytics")}), {"transactions": "SELECT COUNT(*) FROM trans"}, fix="SELECT 1")
+    r = a.ask("How many transactions are there?", source=src.name)
+    assert r.status == "refused" and "does not read any table" in r.refusal_reason

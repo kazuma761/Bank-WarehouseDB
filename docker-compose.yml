@@ -2,8 +2,10 @@
 # Secrets come from .env (see .env.example):  BANKQL_API_KEYS, BANKQL_PG_ADMIN_PASSWORD, BANKQL_PG_RO_PASSWORD.
 services:
   api:
-    build: .
-    ports: ["8000:8000"]
+    build:
+      context: .
+      args: {REGISTRY: "${REGISTRY:-public.ecr.aws/docker/library}"}
+    ports: ["${BANKQL_BIND:-127.0.0.1}:8000:8000"]   # set BANKQL_BIND=0.0.0.0 only behind your app's network controls
     environment:
       BANKQL_API_KEYS: ${BANKQL_API_KEYS:?set BANKQL_API_KEYS in .env}
       BANKQL_FINANCIAL_URL: sqlite:////app/data/fixture/financial.sqlite
@@ -12,16 +14,20 @@ services:
       BANKQL_PG_ADMIN_URL: postgresql+psycopg://bankql_admin:${BANKQL_PG_ADMIN_PASSWORD:?}@postgres:5432/bankql_fixture
       BANKQL_ROUTER_URL: http://host.docker.internal:8080/v1
       BANKQL_SQL_URL: http://host.docker.internal:8081/v1
-      BANKQL_REDIS_URL: redis://redis:6379/0
+      BANKQL_REDIS_URL: redis://:${BANKQL_REDIS_PASSWORD:?}@redis:6379/0
+      BANKQL_LLAMA_API_KEY: ${BANKQL_LLAMA_API_KEY:?set BANKQL_LLAMA_API_KEY in .env}
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: ["bankql-data:/app/data"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_started}
   redis:
-    image: redis:7-alpine
+    image: ${REGISTRY:-public.ecr.aws/docker/library}/redis:7-alpine
+    command: ["redis-server", "--requirepass", "${BANKQL_REDIS_PASSWORD:?set BANKQL_REDIS_PASSWORD in .env}", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:6379:6379"]   # host access for scripts/demo.ps1; never 0.0.0.0
   postgres:
-    image: postgres:16
+    image: ${REGISTRY:-public.ecr.aws/docker/library}/postgres:16
+    ports: ["127.0.0.1:5432:5432"]
     environment:
       POSTGRES_PASSWORD: ${BANKQL_PG_ADMIN_PASSWORD:?}
       BANKQL_PG_ADMIN_PASSWORD: ${BANKQL_PG_ADMIN_PASSWORD:?}

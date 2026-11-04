@@ -1,0 +1,98 @@
+{
+  "turns": 34,
+  "conversations": 31,
+  "status": {
+    "ok": 23,
+    "refused": 9,
+    "needs_clarification": 2
+  },
+  "route": {
+    "lookup": 13,
+    "refused": 9,
+    "clarify": 2,
+    "analytics": 10
+  },
+  "as_expected": 34,
+  "unexpected": [],
+  "http_ms": {
+    "p50": 18.3,
+    "p95": 111.8
+  },
+  "stage_ms": {
+    "analytics_attempt_1": {
+      "p50": 38.2,
+      "p95": 84.1,
+      "n": 13
+    },
+    "analytics_attempt_2": {
+      "p50": 63.5,
+      "p95": 76.4,
+      "n": 2
+    },
+    "execute": {
+      "p50": 5.5,
+      "p95": 11.0,
+      "n": 11
+    },
+    "input_guardrail": {
+      "p50": 0.1,
+      "p95": 0.1,
+      "n": 34
+    },
+    "lookup": {
+      "p50": 12.3,
+      "p95": 31.7,
+      "n": 17
+    },
+    "mercer_candidate_generation": {
+      "p50": 0.9,
+      "p95": 1.5,
+      "n": 13
+    },
+    "mercer_correction": {
+      "p50": 9.1,
+      "p95": 9.1,
+      "n": 2
+    },
+    "mercer_entity_retrieval": {
+      "p50": 22.0,
+      "p95": 74.5,
+      "n": 13
+    },
+    "mercer_execution_scoring": {
+      "p50": 14.7,
+      "p95": 18.9,
+      "n": 13
+    },
+    "mercer_schema_linking": {
+      "p50": 1.0,
+      "p95": 2.1,
+      "n": 13
+    },
+    "output_guardrail": {
+      "p50": 0.0,
+      "p95": 0.5,
+      "n": 23
+    },
+    "rewrite": {
+      "p50": 0.1,
+      "p95": 0.1,
+      "n": 3
+    },
+    "router": {
+      "p50": 0.1,
+      "p95": 0.1,
+      "n": 32
+    },
+    "summary": {
+      "p50": 0.1,
+      "p95": 0.3,
+      "n": 10
+    },
+    "total": {
+      "p50": 13.7,
+      "p95": 105.9,
+      "n": 34
+    }
+  }
+}

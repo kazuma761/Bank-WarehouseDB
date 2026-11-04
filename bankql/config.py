@@ -23,6 +23,7 @@ def load_dotenv(path: str | Path = ".env") -> None:
 class ModelEndpoint(BaseModel):
     base_url: str
     base_url_env: str | None = None
+    api_key_env: str | None = None
     model: str = "local"
     hf_repo: str | None = None
     hf_file: str | None = None
@@ -36,6 +37,9 @@ class ModelEndpoint(BaseModel):
 
     def url(self) -> str:
         return os.environ.get(self.base_url_env or "", "") or self.base_url
+
+    def api_key(self) -> str | None:
+        return os.environ.get(self.api_key_env or "") or None
 
     def redis(self) -> str:
         return os.environ.get(self.redis_url_env or "", "") or self.redis_url

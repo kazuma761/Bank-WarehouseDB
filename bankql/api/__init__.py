@@ -11,15 +11,17 @@ import queue
 import threading
 import time
 import uuid
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from bankql.agent import Agent, AskResult
 from bankql.connectors import QueryRejected, QueryTimeout, jsonable
 
 MODEL_NAME = "bankql"
+DEMO_HTML = (Path(__file__).parent / "demo.html").read_text(encoding="utf-8")
 CHAT_PREVIEW_ROWS = 20
 
 
@@ -28,6 +30,8 @@ class AskRequest(BaseModel):
     source: str | None = None
     session_id: str | None = None
     evidence: str | None = None
+    user_id: str | None = Field(default=None, max_length=200,
+                                description="Reserved for the per-user permissions phase: accepted and audited, not yet enforced.")
     stream: bool = False
 
 
@@ -57,6 +61,12 @@ def create_app(agent: Agent) -> FastAPI:
                   description="Local-LLM, read-only natural-language → SQL for bank data.")
     auth = [Depends(require_key)]
 
+    @app.get("/demo", include_in_schema=False)
+    def demo():
+        return HTMLResponse(DEMO_HTML, headers={"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+                                                "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; "
+                                                "style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"})
+
     @app.get("/health")
     def health():
         return {"status": "ok", "sources": list(agent.sources)}
@@ -65,13 +75,14 @@ def create_app(agent: Agent) -> FastAPI:
               responses={200: {"content": {"text/event-stream": {}}, "description": "JSON, or SSE when stream=true"}})
     def ask(req: AskRequest):
         if not req.stream:
-            return agent.ask(req.question, req.source, req.session_id, evidence=req.evidence, surface="rest")
+            return agent.ask(req.question, req.source, req.session_id, evidence=req.evidence, surface="rest",
+                             user_id=req.user_id)
         q: queue.Queue = queue.Queue()
 
         def work():
             try:
                 r = agent.ask(req.question, req.source, req.session_id, evidence=req.evidence, surface="rest",
-                              on_event=lambda stage, data: q.put(("stage", {"stage": stage, **data})))
+                              user_id=req.user_id, on_event=lambda stage, data: q.put(("stage", {"stage": stage, **data})))
                 q.put(("result", r.model_dump()))
             except Exception as e:  # noqa: BLE001
                 q.put(("error", {"error": str(e)[:500]}))

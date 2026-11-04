@@ -89,3 +89,10 @@ def test_openapi_spec_lists_endpoints(client):
     paths = set(client.get("/openapi.json").json()["paths"])
     assert {"/v1/ask", "/v1/sources", "/v1/sources/{source}/tables", "/v1/sql/validate", "/v1/sql/run",
             "/v1/results/{export_id}.{fmt}", "/health", "/v1/chat/completions", "/v1/models"} <= paths
+
+
+def test_demo_page_served_without_key_and_locked_down(client):
+    r = client.get("/demo")
+    assert r.status_code == 200 and "BankQL" in r.text and "/v1/ask" in r.text and "session_id" in r.text
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"] and r.headers["x-content-type-options"] == "nosniff"
+    assert "innerHTML" not in r.text  # DB values are rendered with textContent only

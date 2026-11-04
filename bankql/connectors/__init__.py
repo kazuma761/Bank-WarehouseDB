@@ -63,6 +63,7 @@ class QueryResult:
     truncated: bool
     elapsed_ms: float
     warnings: list[str] = field(default_factory=list)
+    tables: list[str] = field(default_factory=list)  # tables the validator saw the query read
 
 
 class QueryRejected(Exception):
@@ -238,7 +239,7 @@ class Source:
             cols = list(result.keys())
             rows = [list(r) for r in result.fetchmany(cap + 1)]
         truncated = len(rows) > cap
-        return QueryResult(v.sql, cols, rows[:cap], truncated, round((time.perf_counter() - t0) * 1000, 1), v.warnings)
+        return QueryResult(v.sql, cols, rows[:cap], truncated, round((time.perf_counter() - t0) * 1000, 1), v.warnings, v.tables)
 
     def stream(self, sql: str, params: dict | None = None, *, batch: int = 10_000,
                allow_pii_output: bool = False) -> Iterator[tuple[list[str], list[list]]]:

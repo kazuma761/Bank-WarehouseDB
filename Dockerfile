@@ -1,6 +1,8 @@
 # BankQL API. llama-server runs on the HOST (GPU); point BANKQL_ROUTER_URL / BANKQL_SQL_URL at host.docker.internal.
-FROM python:3.12-slim
-COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /usr/local/bin/uv
+# Registry is a build ARG (Docker Hub rate-limits anonymous pulls): docker build --build-arg REGISTRY=docker.io/library .
+ARG REGISTRY=public.ecr.aws/docker/library
+FROM ${REGISTRY}/python:3.12-slim
+RUN pip install --no-cache-dir uv==0.9.7
 WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1
 COPY pyproject.toml uv.lock ./

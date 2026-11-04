@@ -33,11 +33,12 @@ class OpenAICompatClient:
     top-level `json_schema` field (llama-server's native form). `structured_output="auto"` tries the first and
     falls back to the second on a 4xx, then remembers what worked."""
 
-    def __init__(self, base_url: str, model: str = "local", timeout_s: float = 120, structured_output: str = "auto"):
+    def __init__(self, base_url: str, model: str = "local", timeout_s: float = 120, structured_output: str = "auto",
+                 api_key: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.mode = structured_output
-        self._http = httpx.Client(timeout=timeout_s)
+        self._http = httpx.Client(timeout=timeout_s, headers={"Authorization": f"Bearer {api_key}"} if api_key else None)
 
     def _payload(self, messages, temperature, max_tokens, json_schema, logprobs, mode) -> dict:
         p = {"model": self.model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}

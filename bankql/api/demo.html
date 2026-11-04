@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BankQL demo</title>
+<style>
+  :root { --bg:#fafaf9; --fg:#1c1917; --muted:#78716c; --line:#e7e5e4; --card:#fff; --accent:#0f766e; --bad:#b91c1c; --code:#f5f5f4; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1c1917; --fg:#f5f5f4; --muted:#a8a29e; --line:#44403c; --card:#292524; --accent:#5eead4; --bad:#fca5a5; --code:#1f1d1b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; } .sub { color: var(--muted); margin: 0 0 20px; }
+  form { display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 8px; }
+  input, select, button { font: inherit; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--fg); }
+  #q { flex: 1 1 360px; } button { background: var(--accent); color: var(--bg); border: 0; cursor: pointer; font-weight: 600; }
+  button[disabled] { opacity: .6; cursor: wait; } .ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 400; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .turn { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .question { font-weight: 600; margin-bottom: 8px; } .answer { margin: 8px 0 12px; }
+  .refused { color: var(--bad); }
+  .badges span { display:inline-block; font-size: 12px; padding: 2px 8px; margin: 0 6px 6px 0; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow-x: auto; font-size: 13px; margin: 8px 0; }
+  .tablewrap { overflow-x: auto; margin: 8px 0; }
+  table { border-collapse: collapse; font-size: 13px; } th, td { border-bottom: 1px solid var(--line); padding: 5px 10px; text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; } details { margin-top: 6px; } summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .lat { display:grid; grid-template-columns: max-content 1fr max-content; gap: 3px 10px; font-size: 12px; align-items: center; margin-top: 6px; }
+  .bar { height: 6px; background: var(--accent); border-radius: 3px; min-width: 1px; }
+  .choices li { cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+<main>
+  <h1>BankQL</h1>
+  <p class="sub">Ask about the bank data. Answers come straight from the database; the SQL used is shown.</p>
+  <form id="f">
+    <input id="q" placeholder="e.g. show client 12's accounts — or — how many loans are in debt?" autocomplete="off" required>
+    <select id="source"></select>
+    <button id="go">Ask</button>
+  </form>
+  <div class="row">
+    <input id="key" type="password" placeholder="API key" size="22" autocomplete="off">
+    <span id="sess"></span>
+    <button class="ghost" id="reset" type="button">New conversation</button>
+  </div>
+  <div id="log"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const store = { get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+                set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} } };
+let sessionId = store.get("bankql_session") || newSession();
+function newSession() { const s = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())); store.set("bankql_session", s); return s; }
+function showSession() { $("sess").textContent = "session " + sessionId.slice(0, 8); }
+$("key").value = store.get("bankql_key") || "";
+showSession();
+
+function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = String(text); if (cls) e.className = cls; return e; }
+function headers() { return { "content-type": "application/json", "X-API-Key": $("key").value }; }
+
+async function loadSources() {
+  const r = await fetch("/v1/sources", { headers: headers() });
+  if (!r.ok) return;
+  $("source").replaceChildren(...(await r.json()).filter(s => s.available !== false).map(s => { const o = el("option", s.name); o.value = s.name; return o; }));
+}
+$("key").addEventListener("change", () => { store.set("bankql_key", $("key").value); loadSources(); });
+$("reset").addEventListener("click", () => { sessionId = newSession(); showSession(); $("log").replaceChildren(); });
+
+function table(cols, rows) {
+  const t = el("table"), head = el("tr");
+  cols.forEach(c => head.appendChild(el("th", c))); t.appendChild(el("thead")).appendChild(head);
+  const body = t.appendChild(el("tbody"));
+  rows.forEach(r => { const tr = el("tr"); r.forEach(v => tr.appendChild(el("td", v == null ? "" : v))); body.appendChild(tr); });
+  const w = el("div", null, "tablewrap"); w.appendChild(t); return w;
+}
+
+function latency(t) {
+  const wrap = el("div", null, "lat"), entries = Object.entries(t || {}).filter(([k]) => k !== "total");
+  const max = Math.max(1, ...entries.map(([, v]) => v));
+  entries.forEach(([k, v]) => { wrap.appendChild(el("span", k)); const b = el("div", null, "bar"); b.style.width = (100 * v / max) + "%"; wrap.appendChild(b); wrap.appendChild(el("span", v.toFixed(1) + " ms")); });
+  return wrap;
+}
+
+function render(question, r) {
+  const card = el("div", null, "turn");
+  card.appendChild(el("div", question, "question"));
+  if (r.standalone_question && r.standalone_question !== question) card.appendChild(el("div", "→ understood as: " + r.standalone_question, "sub"));
+  const badges = el("div", null, "badges");
+  [["route", r.route], ["status", r.status], ["confidence", r.confidence == null ? "–" : r.confidence.toFixed(2)],
+   ["rows", r.row_count], ["total", (r.timings_ms?.total ?? 0).toFixed(0) + " ms"]].forEach(([k, v]) => badges.appendChild(el("span", k + ": " + v)));
+  card.appendChild(badges);
+  card.appendChild(el("div", r.summary || r.refusal_reason || "", "answer" + (r.status === "ok" ? "" : " refused")));
+  if (r.choices?.length) {
+    const ul = el("ul", null, "choices");
+    r.choices.forEach(c => { const li = el("li", Object.entries(c).filter(([k]) => k !== "score").map(([k, v]) => k + ": " + v).join(", "));
+      li.addEventListener("click", () => { $("q").value = c.client_id ? `client ${c.client_id}: ${question}` : `account ${c.account_id}: ${question}`; $("q").focus(); });
+      ul.appendChild(li); });
+    card.appendChild(ul);
+  }
+  (r.results || []).forEach(rs => {
+    if (r.results.length > 1) card.appendChild(el("div", rs.name, "sub"));
+    if (rs.rows?.length) card.appendChild(table(rs.columns, rs.rows));
+    if (rs.row_count > (rs.rows?.length || 0)) {
+      const more = el("div", `Showing ${rs.rows.length} of ${rs.row_count} rows. `, "sub");
+      if (rs.export_id) { const a = el("a", "Download CSV"); a.href = "#"; a.addEventListener("click", (e) => { e.preventDefault(); download(rs.export_id); }); more.appendChild(a); }
+      card.appendChild(more);
+    }
+    Object.entries(rs.legend || {}).forEach(([col, codes]) => card.appendChild(el("div", col + ": " + Object.entries(codes).map(([k, v]) => `${k} = ${v}`).join("; "), "sub")));
+  });
+  if (r.sql) card.appendChild(el("pre", r.sql));
+  const d = el("details"); d.appendChild(el("summary", "per-stage latency" + (r.warnings?.length ? " · " + r.warnings.length + " warning(s)" : "")));
+  d.appendChild(latency(r.timings_ms));
+  (r.warnings || []).forEach(w => d.appendChild(el("div", w, "sub")));
+  card.appendChild(d);
+  $("log").prepend(card);
+}
+
+async function download(id) {
+  const r = await fetch(`/v1/results/${id}.csv`, { headers: headers() });
+  if (!r.ok) return alert("Download failed: " + r.status);
+  const url = URL.createObjectURL(await r.blob()), a = el("a"); a.href = url; a.download = `bankql-${id}.csv`; a.click(); URL.revokeObjectURL(url);
+}
+
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const question = $("q").value.trim(); if (!question) return;
+  $("go").disabled = true;
+  try {
+    const r = await fetch("/v1/ask", { method: "POST", headers: headers(),
+      body: JSON.stringify({ question, source: $("source").value || null, session_id: sessionId }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) render(question, { status: "error", route: "error", refusal_reason: `HTTP ${r.status}: ${body.detail?.message || body.detail || "request failed"}` });
+    else { render(question, body); $("q").value = ""; }
+  } catch (err) { render(question, { status: "error", route: "error", refusal_reason: String(err) }); }
+  finally { $("go").disabled = false; }
+});
+if ($("key").value) loadSources();
+</script>
+</body>
+</html>
