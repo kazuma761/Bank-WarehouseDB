@@ -11,7 +11,7 @@ databases (read-only). Three parts: **1** app → BankQL, **2** BankQL → datab
 |---|---|
 | Base URL | `http://<bankql-host>:8000` (binds `127.0.0.1` by default — see Part 3) |
 | Auth header | `X-API-Key: <key>` (or `Authorization: Bearer <key>`) on every `/v1/*` call |
-| Health | `GET /health` → `{"status":"ok","sources":[…]}` — no key needed; use it for liveness probes |
+| Health | `GET /health` → `{"status":"ok"}` — no key needed (reveals nothing else); use it for liveness probes |
 | OpenAPI | `GET /openapi.json` (generate a client in any language), docs at `/docs` |
 
 ### `POST /v1/ask`
@@ -156,8 +156,26 @@ var resp = client.send(req, HttpResponse.BodyHandlers.ofString());
 ### API keys and per-key policy
 
 - Simplest: `BANKQL_API_KEYS=key1,key2` — every key gets the default policy.
-- Per-key policy: `config/api_keys.yaml` lists keys by **SHA-256 hash** (never the key itself;
-  `bankql hash-key` prints it) with `sources` allowlist, `run_sql` (off by default) and rate limits.
+- Per-key policy: `config/api_keys.yaml` lists keys by **SHA-256 hash** (never the key itself) with a
+  `sources` allowlist, `run_sql` (off by default) and per-minute limits:
+
+```bash
+.venv/bin/bankql hash-key --generate           # new key + its hash; give the key to the app, the hash to the YAML
+echo -n "$EXISTING_KEY" | .venv/bin/bankql hash-key
+```
+
+```yaml
+# config/api_keys.yaml
+defaults: {sources: ["*"], run_sql: false, asks_per_minute: 60, lookups_per_minute: 30}
+keys:
+  - id: core-banking-app          # appears in the audit log instead of the key
+    sha256: 3f1c…
+    sources: [core_pg]            # 403 for any other source
+    lookups_per_minute: 120       # 429 + Retry-After beyond this
+```
+
+When a query filters on a PII column (e.g. a name), BankQL only returns `COUNT`s and non-PII group keys, and
+counts below 5 come back as the string `"<5"` — handle that in your UI.
 
 ---
 

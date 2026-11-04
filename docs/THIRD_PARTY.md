@@ -88,6 +88,30 @@ Differences from SPEC.md:
    threshold, though it fills `block_reason`). → Since we only pass PII-column cells and date-free text,
    we block on any output issue.
 
+### SQLAS role in BankQL (decision, 2026-11-04)
+
+Advisory only: `check_input` / `check_sql` / `check_output` produce warnings (`sqlas_*` in `warnings`, and
+`sqlas_input_would_block` when SQLAS itself would have blocked); enforcement is our validator, PII lineage,
+small-count rule and output check. SQLAS evaluation functions and `classify_failure` are used in `bankql/eval`.
+
+### SQLAS findings worth reporting upstream (sqlas 2.8.0)
+
+1. `read_only_compliance` returns 0.0 for any root that is not `Select`/`With`, so every `UNION` / `EXCEPT` /
+   `INTERSECT` is classified as a write and `check_sql` blocks it. Suggest: accept `exp.SetOperation` (and
+   `exp.Subquery`) roots.
+2. Its phone regex `\+?\d[\d\-\s().]{7,}\d` matches ISO dates (`1995-03-24`), so `check_output` flags any result
+   or summary with a date. Suggest: exclude `\d{4}-\d{2}-\d{2}` or require ≥ 10 digits.
+3. `check_output` scores one PII hit in result rows as 1 − 0.1 = 0.9 ≥ the default 0.85 threshold and does not
+   block, yet fills `block_reason` — inconsistent result object.
+4. `GuardrailPipeline(pii_columns=[])` silently uses the defaults (`pii_columns or DEFAULT_PII_COLUMNS`); there is
+   no way to disable column-name PII matching.
+5. `check_input` patterns `bulk_pii_request` (`show me all … customer`) and `pii_bulk_request` (any "credit card")
+   block ordinary banking questions; `raw_sql_injection_attempt` blocks "show me the raw sql".
+6. `schema_compliance` reports CTE names as unknown tables (`invalid_tables: ['x']` for `WITH x AS (…)`).
+7. `check_sql` counts `--` / `/* */` comments and `UNION SELECT` as injection signals in model-generated SQL,
+   where they are benign; documenting that these heuristics target user-concatenated SQL would help.
+8. `run_bird_benchmark` assumes the full BIRD layout (`dev/dev.json`); mini-dev ships `mini_dev_sqlite.json`.
+
 ## BIRD mini_dev — https://github.com/bird-bench/mini_dev
 
 - bird_mini_dev commit: `1c49a375e76c471e218564da3f4617513d33e371` (2026-10-28)

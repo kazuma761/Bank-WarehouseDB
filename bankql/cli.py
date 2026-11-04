@@ -2,6 +2,7 @@
 
     bankql check-source <name>     connectivity, read-only enforcement (inspected, never by writing), timeout, tables
     bankql init-source <name>      semantic YAML skeleton from the live schema (TODO descriptions to fill in)
+    bankql hash-key [--generate]   SHA-256 of an API key (stdin) for config/api_keys.yaml
 """
 from __future__ import annotations
 
@@ -156,7 +157,20 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("name")
     i.add_argument("-o", "--out", help="default: config/semantic/<name>.yaml")
     i.add_argument("--force", action="store_true", help="overwrite an existing file")
+    h = sub.add_parser("hash-key", help="print the SHA-256 to put in config/api_keys.yaml (reads the key from stdin)")
+    h.add_argument("--generate", action="store_true", help="generate a new random key, print key and hash")
     a = ap.parse_args(argv)
+    if a.cmd == "hash-key":
+        import secrets
+
+        from bankql.auth import hash_key
+
+        key = secrets.token_urlsafe(32) if a.generate else sys.stdin.readline().strip()
+        if not key:
+            print("no key on stdin", file=sys.stderr)
+            return 2
+        print(f"key:    {key}\nsha256: {hash_key(key)}" if a.generate else hash_key(key))
+        return 0
     cfg = load_config(a.config)
     if a.name not in cfg.sources:
         print(f"unknown source {a.name!r}; configured: {', '.join(cfg.sources)}", file=sys.stderr)
