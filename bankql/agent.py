@@ -189,7 +189,7 @@ class Agent:
                 res.warnings.append("verified_query_cache_hit")
                 emit("router", {"intent": "analytics", "confidence": 1.0, "verified_cache": True})
                 try:
-                    self._execute_analytics(res, src, cached, timer, emit, principal.key_id)
+                    self._execute_analytics(res, src, cached, timer, emit, principal.key_id, principal.policy.pii_filter)
                 except _Refuse:
                     self.verified.forget(vkey)  # stale (data or schema changed): fall back to the full path
                     res.warnings.append("verified_query_cache_stale")
@@ -217,7 +217,7 @@ class Agent:
                     self._lookup(res, src, d.tools, emit, principal.key_id)
             else:
                 res.route, res.intent = "analytics", ["analytics"]
-                self._analytics(res, src, evidence, timer, emit, principal.key_id)
+                self._analytics(res, src, evidence, timer, emit, principal.key_id, principal.policy.pii_filter)
             with timer("output_guardrail"):
                 self._output_guard(res, src)
             res.status = "ok"
@@ -366,11 +366,12 @@ class Agent:
 
     # ------------------------------------------------------------------------------------------ analytics
 
-    def _analytics(self, res: AskResult, src: Source, evidence, timer, emit, owner: str) -> None:
+    def _analytics(self, res: AskResult, src: Source, evidence, timer, emit, owner: str, pii_filter: bool = False) -> None:
         feedback, attempts = None, self.cfg.agent.max_validation_attempts
         for attempt in range(1, attempts + 1):
             with timer(f"analytics_attempt_{attempt}"):
-                ar = self.engine.generate(res.standalone_question, source=src, evidence=evidence, feedback=feedback)
+                ar = self.engine.generate(res.standalone_question, source=src, evidence=evidence, feedback=feedback,
+                                          allow_pii_filter=pii_filter)
             for k, v in ar.stage_timings_ms.items():
                 res.timings_ms[f"mercer_{k}"] = res.timings_ms.get(f"mercer_{k}", 0) + v
             emit("analytics", {"attempt": attempt, "ok": ar.ok, "error": ar.error[:200]})
@@ -379,25 +380,26 @@ class Agent:
             feedback = ar.error[:300]
         else:
             raise _Refuse(f"{NOT_SURE} — I couldn't produce a valid query after {attempts} attempts ({_public(feedback)}).")
-        self._execute_analytics(res, src, ar.sql, timer, emit, owner)
+        self._execute_analytics(res, src, ar.sql, timer, emit, owner, pii_filter)
 
-    def _execute_analytics(self, res: AskResult, src: Source, sql: str, timer, emit, owner: str) -> None:
+    def _execute_analytics(self, res: AskResult, src: Source, sql: str, timer, emit, owner: str,
+                           pii_filter: bool = False) -> None:
         res.sql = sql
         try:
             with timer("execute"):
-                exp = self.exporter.export(src, sql, preview_rows=src.cfg.preview_rows, owner=owner)
+                exp = self.exporter.export(src, sql, preview_rows=src.cfg.preview_rows, owner=owner, allow_pii_filter=pii_filter)
         except (QueryRejected, QueryTimeout) as e:
             raise _Refuse(f"{NOT_SURE} — the query could not be run safely ({e}).") from e
         rows = [[jsonable(v) for v in r] for r in exp.preview]
         res.results = [ResultSet(name="analytics", sql=sql, columns=exp.columns, rows=rows, row_count=exp.rows,
                                  truncated=exp.truncated, export_id=exp.id,
-                                 legend=src.semantic.legend(exp.columns, src.validate(sql).tables))]
+                                 legend=src.semantic.legend(exp.columns, src.validate(sql, allow_pii_filter=pii_filter).tables))]
         res.columns, res.rows, res.row_count, res.export_id = exp.columns, rows, exp.rows, exp.id
         emit("execute", {"row_count": exp.rows})
         if exp.rows == 0:
             raise _Refuse(f"{NOT_SURE} — the query returned no rows, which may mean it misread the question. "
                           f"SQL used: {sql}")
-        used = set(src.validate(sql).tables)
+        used = set(src.validate(sql, allow_pii_filter=pii_filter).tables)
         if not used:  # e.g. a "correction" to SELECT 1: valid SQL that cannot answer a data question
             raise _Refuse(f"{NOT_SURE} — the generated query does not read any table, so it can't answer this. "
                           f"SQL: {sql}")

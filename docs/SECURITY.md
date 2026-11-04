@@ -6,14 +6,15 @@ PII rules, the small-count rule, connection-level read-only access, and our own 
 
 ## Results
 
-`tests/security/` — **50 passed, 0 failed** (run on SQLite, DuckDB and PostgreSQL 16 where parametrised).
+`tests/security/` — **57 passed, 0 failed** (run on SQLite, DuckDB and PostgreSQL 16 where parametrised).
 Core guard suites (`test_validator`, `test_pii_lineage`, `test_guardrails`, `test_connectors`) — **259 passed**.
 Full suite — **527 passed, 1 skipped** (the skip is the DuckDB-extension federation blocker, unrelated to security).
 
 | # | Control | Tests | Result |
 |---|---|---|---|
 | D1 | No PII value from the DB in any prompt: PII columns are never sampled (so absent from M-Schema, the entity index and the Redis schema cache); session history stores ids, not names, for clarifications; client-supplied history is reduced to first lines and PII-masked | `test_pii_never_in_prompts.py` (6) | PASS |
-| D2 | Small-count rule: PII only counted or AND-filtered; outputs only COUNT + non-PII group keys; counts < 5 → `"<5"` (also in exports) | `test_small_counts.py` (23), `test_pii_lineage.py` | PASS — letter-by-letter probe of client 12 returns `"<5"` for all 26 letters; OR / NOT / CASE / row-level / MIN / UNION probe shapes refused |
+| D2 | **PII-filter permission** (per key, `pii_filter`, default **deny**): without it a PII column may not appear in WHERE / HAVING / JOIN-ON (code `pii_filter_denied`) on any path — agent analytics incl. Mercer's candidate sandbox, `/v1/sql/run`, `/v1/sql/validate`, exports, MCP | `test_small_counts.py`, `test_pii_lineage.py` | PASS — default key: every name probe refused before it runs; COUNT of PII without a filter still allowed |
+| D2 | Small-count rule (keys **with** `pii_filter`): PII only counted or AND-filtered; outputs only COUNT + non-PII group keys; counts < 5 → `"<5"` (also in exports) | `test_small_counts.py`, `test_pii_lineage.py` | PASS — letter-by-letter probe of client 12 returns `"<5"` for all 26 letters; OR / NOT / CASE / row-level / MIN / UNION probe shapes refused |
 | D2 | Per-key rate limits (asks, lookups per minute), 429 + `Retry-After`, per key, audited | `test_small_counts.py::test_lookup_rate_limit_per_key` | PASS |
 | D3 | llama-server bound to 127.0.0.1 with `--api-key`; our client and Mercer's backend send it | `test_side_services.py` (4) | PASS |
 | D3 | Redis 127.0.0.1 + `--requirepass` (demo script, compose); compose publishes ports on 127.0.0.1 only | `test_side_services.py` | PASS (static checks of the scripts) |
@@ -33,8 +34,11 @@ corrector "fix" to `SELECT 1` (reads no table) was accepted as an answer; `bankq
 
 1. **Differencing attacks on counts.** Two allowed counts ≥ 5 that differ by one person reveal a fact about that
    person (`COUNT … WHERE id IN (S) AND name LIKE 'A%'` vs. the same with 12 added). Small-count suppression cannot
-   stop this; only noise (differential privacy) or query auditing can. Mitigated by per-key rate limits and the
-   audit log. **Recommendation:** add per-key query budgets on PII-filtered queries, or DP noise for those counts.
+   stop this. **Intended fix:** the `pii_filter` permission (default deny) means only keys that are explicitly
+   trusted with personal data can run such queries at all; together with **per-user identity** (`user_id`, the
+   per-user permissions phase) it narrows that to named people whose queries are attributable in the audit log.
+   Until per-user identity is enforced, a key with `pii_filter: true` is trusted as a whole — grant it only to
+   back-office services, not to customer-facing apps. Further options: per-key query budgets or DP noise.
 2. **SQLAS is advisory.** A prompt-injection *question* reaches the router and Mercer. Everything they produce is
    still validated (read-only, allowlist, PII lineage, small counts), so the worst case is a wrong-but-safe answer
    or a refusal — not a write or a PII leak.

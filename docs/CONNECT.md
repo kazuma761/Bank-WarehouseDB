@@ -166,7 +166,7 @@ echo -n "$EXISTING_KEY" | .venv/bin/bankql hash-key
 
 ```yaml
 # config/api_keys.yaml
-defaults: {sources: ["*"], run_sql: false, asks_per_minute: 60, lookups_per_minute: 30}
+defaults: {sources: ["*"], run_sql: false, pii_filter: false, asks_per_minute: 60, lookups_per_minute: 30}
 keys:
   - id: core-banking-app          # appears in the audit log instead of the key
     sha256: 3f1c…
@@ -174,8 +174,10 @@ keys:
     lookups_per_minute: 120       # 429 + Retry-After beyond this
 ```
 
-When a query filters on a PII column (e.g. a name), BankQL only returns `COUNT`s and non-PII group keys, and
-counts below 5 come back as the string `"<5"` — handle that in your UI.
+Filtering on a PII column (e.g. "how many clients are named …") is **denied by default** (`400` with code
+`pii_filter_denied` on `/v1/sql/run`; a refusal on `/v1/ask`). A key with `pii_filter: true` may do it, and then
+BankQL returns only `COUNT`s and non-PII group keys, with counts below 5 as the string `"<5"` — handle that in your
+UI. Name *lookups* ("show Rahul Sharma's accounts") are unaffected: the resolver handles them, not SQL filters.
 
 ---
 

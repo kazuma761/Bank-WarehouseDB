@@ -52,14 +52,14 @@ SMALL_COUNT_REFUSED = {
 
 @pytest.mark.parametrize("case", sorted(SMALL_COUNT_REFUSED))
 def test_small_count_rule_refuses_per_person_shapes(src, case):
-    v = src.validate(SMALL_COUNT_REFUSED[case])
+    v = src.validate(SMALL_COUNT_REFUSED[case], allow_pii_filter=True)  # even a key allowed to filter on PII
     assert not v.ok and v.code == "pii_filter_shape", (case, v.code, v.reason)
 
 
 def test_small_counts_are_bucketed(src):
-    r = src.run("SELECT COUNT(*) AS n FROM client_profile WHERE full_name = 'Priya Patel'")
+    r = src.run("SELECT COUNT(*) AS n FROM client_profile WHERE full_name = 'Priya Patel'", allow_pii_filter=True)
     assert r.rows == [["<5"]]
-    big = src.run("SELECT COUNT(*) AS n FROM client_profile WHERE full_name LIKE '%a%'")
+    big = src.run("SELECT COUNT(*) AS n FROM client_profile WHERE full_name LIKE '%a%'", allow_pii_filter=True)
     assert isinstance(big.rows[0][0], int) and big.rows[0][0] >= 5
     plain = src.run("SELECT COUNT(*) AS n FROM loan WHERE status = 'D'")  # no PII: untouched
     assert isinstance(plain.rows[0][0], int)
@@ -73,9 +73,23 @@ def test_pii_leak_is_blocked(src, case):
 
 @pytest.mark.parametrize("case", sorted(ALLOWED))
 def test_pii_filter_and_count_allowed(src, case):
-    v = src.validate(ALLOWED[case])
+    v = src.validate(ALLOWED[case], allow_pii_filter=True)
     assert v.ok, (case, v.code, v.reason)
-    src.run(ALLOWED[case], max_rows=3)
+    src.run(ALLOWED[case], max_rows=3, allow_pii_filter=True)
+
+
+FILTERS_PII = {"count_filtered", "exists"}
+
+
+@pytest.mark.parametrize("case", sorted(ALLOWED))
+def test_default_key_may_not_filter_on_pii(src, case):
+    """Default deny: without the pii_filter permission a PII column may not appear in WHERE/HAVING/JOIN-ON.
+    Counting PII without filtering on it stays allowed (still bucketed)."""
+    v = src.validate(ALLOWED[case])
+    if case in FILTERS_PII:
+        assert not v.ok and v.code == "pii_filter_denied", (case, v.code)
+    else:
+        assert v.ok, (case, v.code, v.reason)
 
 
 def test_lookup_context_may_return_pii(src):

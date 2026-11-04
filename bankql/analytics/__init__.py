@@ -41,7 +41,7 @@ class AnalyticsResult:
 
 class AnalyticsEngine(Protocol):
     def generate(self, question: str, *, source: Source, evidence: str | None = None,
-                 feedback: str | None = None) -> AnalyticsResult: ...
+                 feedback: str | None = None, allow_pii_filter: bool = False) -> AnalyticsResult: ...
 
 
 def run_sync(coro):
@@ -143,11 +143,11 @@ class GuardedSandbox(ReadOnlySandbox):
     large-table rule), then our read-only transaction, timeout and row cap. Rejections become ordinary
     failed results so Mercer's taxonomy corrector can try to fix them."""
 
-    def __init__(self, source: Source):
-        self.source = source
+    def __init__(self, source: Source, allow_pii_filter: bool = False):
+        self.source, self.allow_pii_filter = source, allow_pii_filter
 
     def prevalidate(self, sql: str) -> tuple[bool, str]:
-        v = self.source.validate(repair_reserved_tables(sql, ["order"]))
+        v = self.source.validate(repair_reserved_tables(sql, ["order"]), allow_pii_filter=self.allow_pii_filter)
         return (True, v.sql) if v.ok else (False, f"rejected by validator ({v.code}): {v.reason}")
 
     async def execute(self, sql, engine):  # noqa: ARG002 — the Source owns its engine
@@ -156,7 +156,7 @@ class GuardedSandbox(ReadOnlySandbox):
             return ExecutionResult(success=False, sql=sql, row_count=0, columns=[], sample_rows=[], error_message=checked)
         t0 = time.perf_counter()
         try:
-            r = await asyncio.to_thread(self.source.run, checked, None, max_rows=100)
+            r = await asyncio.to_thread(lambda: self.source.run(checked, None, max_rows=100, allow_pii_filter=self.allow_pii_filter))
         except (QueryRejected, QueryTimeout, Exception) as e:  # noqa: BLE001
             return ExecutionResult(success=False, sql=checked, row_count=0, columns=[], sample_rows=[],
                                    error_message=str(e)[:500], execution_time_ms=round((time.perf_counter() - t0) * 1000, 2))
@@ -262,16 +262,17 @@ class MercerEngine:
 
     # --- generation
     def generate(self, question: str, *, source: Source, evidence: str | None = None,
-                 feedback: str | None = None) -> AnalyticsResult:
+                 feedback: str | None = None, allow_pii_filter: bool = False) -> AnalyticsResult:
         q = question
         if evidence:
             q += f"\nHint: {evidence}"
         if feedback:
             q += f"\nA previous SQL attempt was rejected: {feedback}. Write a query that avoids this."
         schema = self.schema_for(source)
-        return run_sync(self._full(q, source, schema) if self.mode == "full" else self._fast(q, source, schema))
+        f = self._full if self.mode == "full" else self._fast
+        return run_sync(f(q, source, schema, allow_pii_filter))
 
-    async def _fast(self, question: str, source: Source, schema: AnnotatedSchema) -> AnalyticsResult:
+    async def _fast(self, question: str, source: Source, schema: AnnotatedSchema, allow_pii_filter: bool = False) -> AnalyticsResult:
         from bankql.analytics.mercer.core.candidate_generator import _strip_fences
         from bankql.analytics.mercer.core.corrector import TaxonomyCorrector
         from bankql.analytics.mercer.core.entity_retriever import EntityRetriever
@@ -282,7 +283,7 @@ class MercerEngine:
         from bankql.analytics.mercer.schema.graph_builder import FKGraphBuilder
 
         backend = DialectBackend(self.backend, source.dialect, self.max_tokens)
-        sandbox, timings = GuardedSandbox(source), {}
+        sandbox, timings = GuardedSandbox(source, allow_pii_filter), {}
         t = time.perf_counter()
         with _fast_sklearn():
             ectx = self._retriever(source, schema).retrieve(question)
@@ -314,10 +315,10 @@ class MercerEngine:
                 res.sql, res.ok, res.error = (checked, True, "") if ok else (None, False, checked)
         return res
 
-    async def _full(self, question: str, source: Source, schema: AnnotatedSchema) -> AnalyticsResult:
+    async def _full(self, question: str, source: Source, schema: AnnotatedSchema, allow_pii_filter: bool = False) -> AnalyticsResult:
         from bankql.analytics.mercer.core.pipeline import MercerPipeline
 
-        sandbox = GuardedSandbox(source)
+        sandbox = GuardedSandbox(source, allow_pii_filter)
         pipe = MercerPipeline(source.engine, backend=DialectBackend(self.backend, source.dialect, self.max_tokens),
                               annotated_schema=schema, sandbox=sandbox, cache=_NoCache())
         with _fast_sklearn():

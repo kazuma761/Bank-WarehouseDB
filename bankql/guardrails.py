@@ -140,7 +140,9 @@ class SqlValidator:
         self.as_of_hint = as_of_hint or (lambda: "")
         self.sqlas = sqlas
 
-    def validate(self, sql: str, *, allow_pii_output: bool = False) -> Validation:
+    def validate(self, sql: str, *, allow_pii_output: bool = False, allow_pii_filter: bool = False) -> Validation:
+        """allow_pii_output: lookups/resolver (read PII by design). allow_pii_filter: the caller's key may filter on
+        PII columns (default deny); then the small-count rule applies."""
         if not sql or not sql.strip():
             return Validation.reject("empty", "No SQL given.")
         try:
@@ -205,6 +207,11 @@ class SqlValidator:
             refs = _pii_refs(analysed, self.catalog) if root is not None else None
             if refs is None:
                 return Validation.reject("pii_unverifiable", "Query touches PII columns and could not be analysed.", warnings=warnings)
+            if refs and not allow_pii_filter:
+                filtered = sorted({c.sql() for c in refs if _ref_place(c) == "filter"})
+                if filtered:
+                    return Validation.reject("pii_filter_denied", f"This API key may not filter on personal-data columns "
+                                             f"({', '.join(filtered)}); the 'pii_filter' permission is required.", warnings=warnings)
             if refs:
                 problem, count_columns = _small_count_shape(analysed, refs)
                 if problem:
@@ -311,25 +318,36 @@ def _pii_refs(tree: exp.Expression, catalog: Catalog) -> list[exp.Column]:
     return out
 
 
+def _ref_place(col: exp.Column) -> str:
+    """Where a PII reference sits: 'count' (inside COUNT), 'filter' (WHERE/HAVING/JOIN-ON), 'other' (select list,
+    GROUP BY, ORDER BY, window), or 'bad:<NODE>' if an OR/NOT/XOR/CASE/IF sits anywhere above it."""
+    place, node = None, col
+    while node.parent is not None:
+        parent = node.parent
+        if isinstance(parent, _BAD_ANCESTORS):
+            return f"bad:{type(parent).__name__.upper()}"
+        if place is None:
+            if isinstance(parent, exp.Count):
+                place = "count"
+            elif isinstance(parent, (exp.Where, exp.Having)) or (isinstance(parent, exp.Join) and node is parent.args.get("on")):
+                place = "filter"
+            elif isinstance(parent, (exp.Select, exp.Group, exp.Order, exp.Ordered, exp.Window)):
+                place = "other"
+        node = parent
+    return place or "other"
+
+
 def _small_count_shape(tree: exp.Expression, refs: list[exp.Column]) -> tuple[str, list[int]]:
     """PII may appear only inside COUNT(...) or in AND-only WHERE/HAVING/JOIN-ON conditions (no OR/NOT/CASE anywhere
     above it); the query may then output only COUNTs and non-PII GROUP BY keys. Returns (problem, count positions)."""
     for col in refs:
-        place, node = None, col
-        while node.parent is not None:
-            parent = node.parent
-            if isinstance(parent, _BAD_ANCESTORS):
-                return (f"{col.sql()} is used under {type(parent).__name__.upper()}; when filtering on personal data only "
-                        "AND-combined conditions are allowed (prevents probing one person with OR).", [])
-            if place is None:
-                if isinstance(parent, exp.Count):
-                    place = "count"
-                elif isinstance(parent, (exp.Where, exp.Having)) or (isinstance(parent, exp.Join) and node is parent.args.get("on")):
-                    place = "filter"
-                elif isinstance(parent, (exp.Select, exp.Group, exp.Order, exp.Ordered, exp.Window)):
-                    return (f"{col.sql()} may only be filtered on (WHERE) or counted, not used in the select list, "
-                            "GROUP BY, ORDER BY or a window.", [])
-            node = parent
+        place = _ref_place(col)
+        if place.startswith("bad:"):
+            return (f"{col.sql()} is used under {place[4:]}; when filtering on personal data only "
+                    "AND-combined conditions are allowed (prevents probing one person with OR).", [])
+        if place == "other":
+            return (f"{col.sql()} may only be filtered on (WHERE) or counted, not used in the select list, "
+                    "GROUP BY, ORDER BY or a window.", [])
     if isinstance(tree, exp.SetOperation):
         return ("UNION/EXCEPT/INTERSECT is not allowed when filtering on personal data.", [])
     group = {g.sql() for g in (tree.args.get("group").expressions if tree.args.get("group") else [])}

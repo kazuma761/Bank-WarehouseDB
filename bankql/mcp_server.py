@@ -13,20 +13,23 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 
 from bankql.agent import Agent
-from bankql.auth import KeyStore, Principal
+from bankql.auth import LIBRARY, KeyStore, Principal
 from bankql.connectors import QueryRejected, QueryTimeout, jsonable
 from bankql.tools import TOOL_NAMES, ToolError
 
 
 def build_server(agent: Agent, principal: Principal | None = None) -> MCPServer:
-    """`run_sql` is registered only for a principal whose policy enables it (off by default)."""
+    """`run_sql` is registered only for a principal whose policy enables it (off by default); PII filters need the
+    principal's `pii_filter` permission (default deny)."""
+    pii_filter = bool(principal and principal.policy.pii_filter)
     mcp = MCPServer(name="bankql", instructions=(
         "Read-only questions over bank data. Use `ask` for natural-language questions; `lookup` for one client's "
         "or account's records; `run_sql` only for a single SELECT (it is validated and may be refused)."))
 
     @mcp.tool(description="Ask a natural-language question. Returns rows from the DB, the SQL used and a summary.")
     async def ask(question: str, source: str | None = None, session_id: str | None = None) -> dict:
-        r = await anyio.to_thread.run_sync(lambda: agent.ask(question, source, session_id, surface="mcp"))
+        r = await anyio.to_thread.run_sync(lambda: agent.ask(question, source, session_id, surface="mcp",
+                                                             principal=principal or LIBRARY))
         return r.model_dump()
 
     @mcp.tool(description=f"Run one fixed lookup tool ({', '.join(TOOL_NAMES)}) without the LLM router.")
@@ -68,7 +71,7 @@ def build_server(agent: Agent, principal: Principal | None = None) -> MCPServer:
 
     @mcp.tool(description="Validate SQL without running it (read-only, allowlist, PII and large-table rules).")
     async def validate_sql(source: str, sql: str) -> dict:
-        v = await anyio.to_thread.run_sync(lambda: agent.source(source).validate(sql))
+        v = await anyio.to_thread.run_sync(lambda: agent.source(source).validate(sql, allow_pii_filter=pii_filter))
         return {"ok": v.ok, "sql": v.sql, "code": v.code, "reason": v.reason, "warnings": v.warnings}
 
     if not (principal and principal.policy.run_sql):
@@ -78,7 +81,7 @@ def build_server(agent: Agent, principal: Principal | None = None) -> MCPServer:
     async def run_sql(source: str, sql: str, max_rows: int = 100) -> dict:
         src = agent.source(source)
         try:
-            r = await anyio.to_thread.run_sync(lambda: src.run(sql, max_rows=min(max(1, max_rows), 100)))
+            r = await anyio.to_thread.run_sync(lambda: src.run(sql, max_rows=min(max(1, max_rows), 100), allow_pii_filter=pii_filter))
         except QueryRejected as e:
             return {"error": e.validation.reason, "code": e.validation.code}
         except QueryTimeout as e:

@@ -136,7 +136,7 @@ def create_app(agent: Agent, keys: KeyStore | None = None) -> FastAPI:
 
     @app.post("/v1/sql/validate")
     def validate(req: SqlRequest, p: Principal = Depends(principal)):
-        v = allowed_src(p, req.source).validate(req.sql)
+        v = allowed_src(p, req.source).validate(req.sql, allow_pii_filter=p.policy.pii_filter)
         return {"ok": v.ok, "sql": v.sql, "code": v.code, "reason": v.reason, "tables": v.tables, "warnings": v.warnings}
 
     @app.post("/v1/sql/run", responses={403: {"description": "run_sql not enabled for this key"}})
@@ -147,12 +147,13 @@ def create_app(agent: Agent, keys: KeyStore | None = None) -> FastAPI:
         agent.limiter.hit(p, "ask")
         t0 = time.perf_counter()
         try:
-            exp = agent.exporter.export(src, req.sql, preview_rows=req.max_rows, owner=p.key_id)
+            exp = agent.exporter.export(src, req.sql, preview_rows=req.max_rows, owner=p.key_id,
+                                        allow_pii_filter=p.policy.pii_filter)
         except QueryRejected as e:
             raise HTTPException(400, {"code": e.validation.code, "reason": e.validation.reason}) from e
         except QueryTimeout as e:
             raise HTTPException(408, str(e)) from e
-        sql = src.validate(req.sql).sql
+        sql = src.validate(req.sql, allow_pii_filter=p.policy.pii_filter).sql
         agent.audit.write(request_id=uuid.uuid4().hex, surface=f"rest_sql:{p.key_id}", source=src.name, question=None,
                           route="sql", sql=agent.scrubber(src.name).sql(sql), row_count=exp.rows,
                           latency_ms=round((time.perf_counter() - t0) * 1000, 1), refused=False)

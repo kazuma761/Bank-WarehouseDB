@@ -2,7 +2,7 @@
 
 Keys come from BANKQL_API_KEYS (default policy) and/or config/api_keys.yaml, which stores only SHA-256 hashes:
 
-    defaults: {sources: ["*"], run_sql: false, asks_per_minute: 60, lookups_per_minute: 30}
+    defaults: {sources: ["*"], run_sql: false, pii_filter: false, asks_per_minute: 60, lookups_per_minute: 30}
     keys:
       - id: core-banking-app
         sha256: 3f1c…                 # `bankql hash-key <key>` prints it; the key itself lives in your secret store
@@ -32,6 +32,7 @@ def hash_key(key: str) -> str:
 class Policy:
     sources: tuple[str, ...] = ("*",)
     run_sql: bool = False
+    pii_filter: bool = False  # may filter on PII columns (then only COUNTs, small counts bucketed); default deny
     asks_per_minute: int = 60
     lookups_per_minute: int = 30
 

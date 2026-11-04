@@ -66,7 +66,8 @@ class Exporter:
         return n
 
     def export(self, source: Source, sql: str, params: dict | None = None, *, fmt: str = "csv",
-               allow_pii_output: bool = False, preview_rows: int = 100, owner: str = "library") -> Export:
+               allow_pii_output: bool = False, preview_rows: int = 100, owner: str = "library",
+               allow_pii_filter: bool = False) -> Export:
         if fmt not in ("csv", "parquet"):
             raise ValueError("fmt must be csv or parquet")
         eid = self._new(owner)
@@ -74,7 +75,7 @@ class Exporter:
         n, columns, preview = 0, [], []
         with path.open("w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
-            for cols, rows in source.stream(sql, params, allow_pii_output=allow_pii_output):
+            for cols, rows in source.stream(sql, params, allow_pii_output=allow_pii_output, allow_pii_filter=allow_pii_filter):
                 if not columns:
                     columns = cols
                     w.writerow(cols)
@@ -83,7 +84,8 @@ class Exporter:
                 w.writerows([_csv_cell(v) for v in r] for r in rows)
                 n += len(rows)
             if not columns:  # empty result: still write the header
-                columns = source.run(sql, params, max_rows=1, allow_pii_output=allow_pii_output).columns
+                columns = source.run(sql, params, max_rows=1, allow_pii_output=allow_pii_output,
+                                     allow_pii_filter=allow_pii_filter).columns
                 w.writerow(columns)
         if fmt == "parquet":
             import duckdb

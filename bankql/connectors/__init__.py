@@ -94,7 +94,7 @@ class Source:
         self.name, self.cfg, self.semantic, self.guard = name, cfg, semantic, guard
         self.dialect = SQLGLOT_DIALECT.get(cfg.dialect, cfg.dialect)
         self._row_estimates: dict[str, int] = {}
-        self._validated: dict[tuple[str, bool], Validation] = {}
+        self._validated: dict[tuple[str, bool, bool], Validation] = {}
         self._lock = threading.Lock()
 
     # ----------------------------------------------------------------------------------- connection
@@ -224,28 +224,28 @@ class Source:
 
     # ----------------------------------------------------------------------------------- execution
 
-    def validate(self, sql: str, *, allow_pii_output: bool = False) -> Validation:
+    def validate(self, sql: str, *, allow_pii_output: bool = False, allow_pii_filter: bool = False) -> Validation:
         """Memoised per (sql, allow_pii_output): validation is deterministic for a given catalog, and one request
         validates the same SQL several times (sandbox, export, legend, plausibility). Callers get a copy."""
         with perf.span("validation"):
-            key = (sql, allow_pii_output)
+            key = (sql, allow_pii_output, allow_pii_filter)
             v = self._validated.get(key)
             if v is None:
-                v = self.validator.validate(sql, allow_pii_output=allow_pii_output)
+                v = self.validator.validate(sql, allow_pii_output=allow_pii_output, allow_pii_filter=allow_pii_filter)
                 if len(self._validated) >= 512:  # shortcut: drop-all bound instead of LRU; fine at this size
                     self._validated.clear()
                 self._validated[key] = v
             return dataclasses.replace(v, tables=list(v.tables), warnings=list(v.warnings), count_columns=list(v.count_columns))
 
-    def _checked(self, sql: str, allow_pii_output: bool) -> Validation:
-        v = self.validate(sql, allow_pii_output=allow_pii_output)
+    def _checked(self, sql: str, allow_pii_output: bool, allow_pii_filter: bool = False) -> Validation:
+        v = self.validate(sql, allow_pii_output=allow_pii_output, allow_pii_filter=allow_pii_filter)
         if not v.ok:
             raise QueryRejected(v)
         return v
 
     def run(self, sql: str, params: dict | None = None, *, max_rows: int | None = None,
-            allow_pii_output: bool = False) -> QueryResult:
-        v = self._checked(sql, allow_pii_output)
+            allow_pii_output: bool = False, allow_pii_filter: bool = False) -> QueryResult:
+        v = self._checked(sql, allow_pii_output, allow_pii_filter)
         cap = min(max_rows or self.cfg.row_cap, self.cfg.row_cap)
         t0 = time.perf_counter()
         with perf.span("db_execute"), self._execution(v.sql, params or {}) as result:
@@ -257,9 +257,9 @@ class Source:
         return QueryResult(v.sql, cols, rows[:cap], truncated, round((time.perf_counter() - t0) * 1000, 1), v.warnings, v.tables)
 
     def stream(self, sql: str, params: dict | None = None, *, batch: int = 10_000,
-               allow_pii_output: bool = False) -> Iterator[tuple[list[str], list[list]]]:
+               allow_pii_output: bool = False, allow_pii_filter: bool = False) -> Iterator[tuple[list[str], list[list]]]:
         """Yield (columns, rows) batches of the full result (up to row_cap) for exports."""
-        v = self._checked(sql, allow_pii_output)
+        v = self._checked(sql, allow_pii_output, allow_pii_filter)
         sent = 0
         with perf.span("db_execute"), self._execution(v.sql, params or {}) as result:
             cols = list(result.keys())

@@ -12,7 +12,8 @@ from tests.fakes import agent_fake, route
 
 def test_letter_by_letter_extraction_learns_nothing(src):
     """Probe client 12's name one letter at a time: every answer is the same '<5', so no letter is revealed."""
-    answers = {ch: src.run(f"SELECT COUNT(*) AS n FROM client_profile WHERE client_id = 12 AND full_name LIKE '{ch}%'").rows[0][0]
+    answers = {ch: src.run(f"SELECT COUNT(*) AS n FROM client_profile WHERE client_id = 12 AND full_name LIKE '{ch}%'",
+                           allow_pii_filter=True).rows[0][0]  # a key WITH the pii_filter permission
                for ch in string.ascii_uppercase}
     assert set(answers.values()) == {"<5"}
     first = src.run("SELECT full_name FROM client_profile WHERE client_id = 12", allow_pii_output=True).rows[0][0][0]
@@ -29,14 +30,49 @@ def test_letter_by_letter_extraction_learns_nothing(src):
 ])
 def test_probe_shapes_are_refused(src, probe):
     with pytest.raises(QueryRejected) as e:
-        src.run(probe)
+        src.run(probe, allow_pii_filter=True)
     assert e.value.validation.code in ("pii_filter_shape", "pii_output")
+
+
+def test_default_key_cannot_probe_at_all(src):
+    """Without the pii_filter permission (the default), every name probe is refused before it runs."""
+    for ch in "AR":
+        with pytest.raises(QueryRejected) as e:
+            src.run(f"SELECT COUNT(*) FROM client_profile WHERE client_id = 12 AND full_name LIKE '{ch}%'")
+        assert e.value.validation.code == "pii_filter_denied"
+
+
+def test_pii_filter_permission_is_per_key_over_rest(make_agent, tmp_path, monkeypatch):
+    monkeypatch.setenv("BANKQL_API_KEYS", "")
+    (tmp_path / "api_keys.yaml").write_text(
+        f"keys:\n  - {{id: plain, sha256: {hash_key('plain')}, run_sql: true}}\n"
+        f"  - {{id: priv, sha256: {hash_key('priv')}, run_sql: true, pii_filter: true}}\n")
+    c = TestClient(create_app(make_agent(agent_fake({})), keys=KeyStore(tmp_path)))
+    q = {"source": "financial", "sql": "SELECT COUNT(*) AS n FROM client_profile WHERE full_name LIKE 'R%'"}
+    denied = c.post("/v1/sql/run", json=q, headers={"X-API-Key": "plain"})
+    assert denied.status_code == 400 and denied.json()["detail"]["code"] == "pii_filter_denied"
+    ok = c.post("/v1/sql/run", json=q, headers={"X-API-Key": "priv"})
+    assert ok.status_code == 200
+    n = ok.json()["rows"][0][0]
+    assert n == "<5" or (isinstance(n, int) and n >= 5)
+
+
+def test_agent_analytics_respects_pii_filter_permission(make_agent, src):
+    from bankql.auth import Policy, Principal
+
+    sql = "SELECT COUNT(*) AS n FROM client_profile WHERE full_name = 'Priya Patel'"
+    a = make_agent(agent_fake({"priya": route("analytics")}), {"priya": sql}, fix=sql)
+    plain = a.ask("how many clients are called priya patel?", source=src.name)
+    assert plain.status == "refused" and "pii_filter_denied" in plain.refusal_reason
+    priv = a.ask("how many clients are called priya patel?", source=src.name, principal=Principal("p", Policy(pii_filter=True)))
+    assert priv.status == "ok" and priv.rows == [["<5"]]
 
 
 def test_exports_are_bucketed_too(sqlite_src, tmp_path):
     from bankql.export import Exporter
 
-    e = Exporter(tmp_path).export(sqlite_src, "SELECT COUNT(*) AS n FROM client_profile WHERE full_name = 'Priya Patel'")
+    e = Exporter(tmp_path).export(sqlite_src, "SELECT COUNT(*) AS n FROM client_profile WHERE full_name = 'Priya Patel'",
+                                  allow_pii_filter=True)
     assert e.path.read_text().splitlines() == ["n", "<5"]
 
 
