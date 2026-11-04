@@ -10,7 +10,7 @@ directly with `.venv/bin/python scripts/gate.py <gate>`).
 |---|---|
 | 1. Skeleton, git, SPEC.md | done |
 | 2. Mercer pinned + read; SQLAS read; differences noted | done — `docs/THIRD_PARTY.md` |
-| 3. Synthetic fixture → SQLite / DuckDB / Postgres | in progress |
+| 3. Synthetic fixture → SQLite / DuckDB / Postgres | done — 5,916 rows, counts match |
 | 4. Phase 2 core | todo |
 | 5. Semantic YAML + Mercer mappings adapter | todo |
 | 6. AnalyticsEngine + Mercer adapter (fast/full) on FakeLLM | todo |
