@@ -27,14 +27,19 @@ def column_text(col: Column) -> str:
     return ". ".join(p for p in parts if p)
 
 
-def to_mercer(model: SemanticModel) -> dict:
+def to_mercer(model: SemanticModel, db_names: dict[str, list[str]] | None = None) -> dict:
+    """*db_names* = {table: [columns]} as the target database reports them, so keys match its case
+    (Postgres folds unquoted A2 to a2, and Mercer's SemanticMapper matches keys exactly)."""
     tables = {}
     glossary = dict(model.glossary)
+    real = {t.lower(): (t, {c.lower(): c for c in cols}) for t, cols in (db_names or {}).items()}
     for tname, tab in model.tables.items():
         desc = tab.description
         if tab.time_column:
             desc += f" Time column: {tab.time_column}."
-        tables[tname] = {"description": desc.strip(), "columns": {c: column_text(col) for c, col in tab.columns.items()}}
+        rt, rcols = real.get(tname.lower(), (tname, {}))
+        tables[rt] = {"description": desc.strip(),
+                      "columns": {rcols.get(c.lower(), c): column_text(col) for c, col in tab.columns.items()}}
         for cname, col in tab.columns.items():
             for phrase, cond in col.value_aliases.items():
                 glossary.setdefault(phrase, f"{tname}.{cond}" if not cond.startswith(f"{tname}.") else cond)
@@ -43,11 +48,11 @@ def to_mercer(model: SemanticModel) -> dict:
     return {"tables": tables, "glossary": glossary}
 
 
-def write_mappings(model: SemanticModel, out: str | Path) -> Path:
+def write_mappings(model: SemanticModel, out: str | Path, db_names: dict[str, list[str]] | None = None) -> Path:
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     header = f"# GENERATED from the semantic model '{model.name}' by bankql.semantic.mercer_mappings — do not edit.\n"
-    out.write_text(header + yaml.safe_dump(to_mercer(model), sort_keys=False, allow_unicode=True), encoding="utf-8")
+    out.write_text(header + yaml.safe_dump(to_mercer(model, db_names), sort_keys=False, allow_unicode=True), encoding="utf-8")
     return out
 
 

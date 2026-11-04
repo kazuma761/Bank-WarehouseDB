@@ -174,8 +174,8 @@ class Source:
         sem = self.semantic.table(meta.name)
         return {"table": meta.name, "description": sem.description if sem else "", "time_column": meta.time_column,
                 "large": meta.large, "columns": [
-                    {"name": c, "type": t, "description": (sem.columns.get(c).description if sem and c in sem.columns else ""),
-                     "valid_values": (sem.columns.get(c).valid_values if sem and c in sem.columns else {}),
+                    {"name": c, "type": t, "description": (sem.column(c).description if sem and sem.column(c) else ""),
+                     "valid_values": (sem.column(c).valid_values if sem and sem.column(c) else {}),
                      "pii": c.lower() in meta.pii} for c, t in meta.columns.items()]}
 
     def estimate_rows(self, meta: TableMeta) -> int:

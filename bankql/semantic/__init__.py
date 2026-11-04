@@ -22,6 +22,10 @@ class Table(BaseModel):
     time_column: str | None = None  # large-table flags live per source in sources.yaml
     optional: bool = False  # may be absent from a source (e.g. synthetic client_profile)
 
+    def column(self, name: str) -> Column | None:
+        """Case-insensitive: Postgres folds unquoted A2 to a2."""
+        return self.columns.get(name) or next((c for k, c in self.columns.items() if k.lower() == name.lower()), None)
+
 
 class Metric(BaseModel):
     sql: str
@@ -47,7 +51,7 @@ class SemanticModel(BaseModel):
         out: dict[str, dict[str, str]] = {}
         for col in columns:
             for tab in self.tables.values():
-                c = tab.columns.get(col)
+                c = tab.column(col)
                 if c and c.valid_values:
                     out.setdefault(col, {}).update(c.valid_values)
         return out
