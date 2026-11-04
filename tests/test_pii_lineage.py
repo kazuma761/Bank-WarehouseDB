@@ -28,15 +28,41 @@ LEAKS = {
 ALLOWED = {
     "count": "SELECT COUNT(full_name) AS n FROM client_profile",
     "count_distinct": "SELECT COUNT(DISTINCT full_name) AS n FROM client_profile",
-    "filter": "SELECT c.client_id, c.gender FROM client c JOIN client_profile p ON p.client_id = c.client_id WHERE p.full_name LIKE 'Rahul%'",
-    "group_by_without_select": "SELECT COUNT(*) AS n FROM client_profile GROUP BY full_name HAVING COUNT(*) > 1",
-    "case_condition_only": "SELECT CASE WHEN full_name LIKE 'A%' THEN 1 ELSE 0 END AS starts_a FROM client_profile",
-    "boolean_compare": "SELECT client_id, full_name = 'Rahul Sharma' AS is_rahul FROM client_profile",
-    "partition_by": "SELECT client_id, ROW_NUMBER() OVER (PARTITION BY full_name ORDER BY client_id) AS rn FROM client_profile",
+    "count_filtered": "SELECT COUNT(*) AS n FROM client_profile WHERE full_name LIKE 'R%'",
+    "count_by_city": "SELECT city, COUNT(DISTINCT full_name) AS names FROM client_profile GROUP BY city",
     "non_pii_cols": "SELECT client_id, city FROM client_profile",
     "exists": "SELECT COUNT(*) FROM client c WHERE EXISTS (SELECT 1 FROM client_profile p WHERE p.client_id = c.client_id AND p.full_name = 'Rahul Sharma')",
+}
+
+# Allowed before the small-count rule; each lets a caller learn something about ONE person, so now refused.
+SMALL_COUNT_REFUSED = {
+    "row_level_filter": "SELECT c.client_id, c.gender FROM client c JOIN client_profile p ON p.client_id = c.client_id WHERE p.full_name LIKE 'Rahul%'",
+    "boolean_compare": "SELECT client_id, full_name = 'Rahul Sharma' AS is_rahul FROM client_profile",
+    "case_condition": "SELECT CASE WHEN full_name LIKE 'A%' THEN 1 ELSE 0 END AS starts_a FROM client_profile",
+    "partition_by": "SELECT client_id, ROW_NUMBER() OVER (PARTITION BY full_name ORDER BY client_id) AS rn FROM client_profile",
+    "group_by_pii": "SELECT COUNT(*) AS n FROM client_profile GROUP BY full_name HAVING COUNT(*) > 1",
+    "or_probe": "SELECT COUNT(*) FROM client_profile WHERE client_id <= 5 OR (client_id = 12 AND full_name LIKE 'A%')",
+    "not_probe": "SELECT COUNT(*) FROM client_profile WHERE NOT full_name LIKE 'A%'",
+    "or_around_subquery": "SELECT COUNT(*) FROM client c WHERE c.client_id <= 5 OR EXISTS (SELECT 1 FROM client_profile p WHERE p.client_id = c.client_id AND p.client_id = 12 AND p.full_name LIKE 'A%')",
+    "sum_filtered": "SELECT SUM(c.district_id) AS s FROM client c JOIN client_profile p ON p.client_id = c.client_id WHERE p.full_name LIKE 'R%'",
+    # Known false refusal: the output check looks at the outermost SELECT only.
     "count_in_cte": "WITH n AS (SELECT city, COUNT(DISTINCT full_name) AS names FROM client_profile GROUP BY city) SELECT city, names FROM n",
 }
+
+
+@pytest.mark.parametrize("case", sorted(SMALL_COUNT_REFUSED))
+def test_small_count_rule_refuses_per_person_shapes(src, case):
+    v = src.validate(SMALL_COUNT_REFUSED[case])
+    assert not v.ok and v.code == "pii_filter_shape", (case, v.code, v.reason)
+
+
+def test_small_counts_are_bucketed(src):
+    r = src.run("SELECT COUNT(*) AS n FROM client_profile WHERE full_name = 'Priya Patel'")
+    assert r.rows == [["<5"]]
+    big = src.run("SELECT COUNT(*) AS n FROM client_profile WHERE full_name LIKE '%a%'")
+    assert isinstance(big.rows[0][0], int) and big.rows[0][0] >= 5
+    plain = src.run("SELECT COUNT(*) AS n FROM loan WHERE status = 'D'")  # no PII: untouched
+    assert isinstance(plain.rows[0][0], int)
 
 
 @pytest.mark.parametrize("case", sorted(LEAKS))

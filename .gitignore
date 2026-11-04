@@ -17,3 +17,4 @@ __pycache__/
 .unlazy/
 .unlazy-hook-state.json
 .claude/settings.local.json
+bankql.bundle

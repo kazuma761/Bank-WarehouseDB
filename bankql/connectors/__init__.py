@@ -19,7 +19,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.pool import QueuePool
 
-from bankql.guardrails import Catalog, SqlasGuard, SqlValidator, TableMeta, Validation
+from bankql.guardrails import Catalog, SqlasGuard, SqlValidator, TableMeta, Validation, bucket_small_counts
 from bankql.semantic import SemanticModel
 
 # sqlglot dialect name for each SQLAlchemy backend name
@@ -239,6 +239,8 @@ class Source:
             cols = list(result.keys())
             rows = [list(r) for r in result.fetchmany(cap + 1)]
         truncated = len(rows) > cap
+        if v.pii_filtered:
+            rows = bucket_small_counts(rows, v.count_columns)
         return QueryResult(v.sql, cols, rows[:cap], truncated, round((time.perf_counter() - t0) * 1000, 1), v.warnings, v.tables)
 
     def stream(self, sql: str, params: dict | None = None, *, batch: int = 10_000,
@@ -253,7 +255,8 @@ class Source:
                 if not rows:
                     break
                 sent += len(rows)
-                yield cols, [list(r) for r in rows]
+                rows = [list(r) for r in rows]
+                yield cols, bucket_small_counts(rows, v.count_columns) if v.pii_filtered else rows
 
     def _execution(self, sql: str, params: dict):
         return _Execution(self, sql, params)

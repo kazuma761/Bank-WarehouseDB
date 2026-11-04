@@ -118,6 +118,8 @@ class Validation:
     reason: str = ""  # human-readable rejection reason
     tables: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    pii_filtered: bool = False  # query reads a PII column (filter/COUNT): small-count rule applies to its result
+    count_columns: list[int] = field(default_factory=list)  # output positions holding COUNTs (bucketed below 5)
 
     @classmethod
     def reject(cls, code: str, reason: str, **kw) -> "Validation":
@@ -197,6 +199,18 @@ class SqlValidator:
                 return Validation.reject("pii_output", f"Output column(s) {', '.join(n for n, _ in leaks)} expose PII ({cols}). "
                                          "You may filter on or COUNT these columns, but not return them.", warnings=warnings)
 
+        # Small-count rule: when PII is only filtered on / counted, restrict the shape and bucket counts < 5.
+        pii_filtered, count_columns = False, []
+        if not allow_pii_output and any(m.pii for m in used.values()):
+            refs = _pii_refs(analysed, self.catalog) if root is not None else None
+            if refs is None:
+                return Validation.reject("pii_unverifiable", "Query touches PII columns and could not be analysed.", warnings=warnings)
+            if refs:
+                problem, count_columns = _small_count_shape(analysed, refs)
+                if problem:
+                    return Validation.reject("pii_filter_shape", problem, warnings=warnings)
+                pii_filtered = True
+
         # Large-table rule: a big table needs a bounding filter on its time column.
         for meta in used.values():
             if not (meta.large and meta.time_column):
@@ -219,7 +233,8 @@ class SqlValidator:
             warnings += w
             if blocked:
                 return Validation.reject("sqlas_blocked", blocked, tables=tables, warnings=warnings)
-        return Validation(ok=True, sql=rendered, tables=tables, warnings=warnings)
+        return Validation(ok=True, sql=rendered, tables=tables, warnings=warnings, pii_filtered=pii_filtered,
+                          count_columns=count_columns)
 
 
 def repair_reserved_tables(sql: str, names: list[str]) -> str:
@@ -279,6 +294,68 @@ def _taint(node: exp.Expression, scope: Scope, catalog: Catalog, memo: dict) -> 
     return set().union(set(), *(_taint(c, scope, catalog, memo) for c in node.iter_expressions()))
 
 
+SMALL_COUNT_MIN = 5
+_BAD_ANCESTORS = (exp.Or, exp.Not, exp.Xor, exp.Case, exp.If)
+
+
+def _pii_refs(tree: exp.Expression, catalog: Catalog) -> list[exp.Column]:
+    """Every column node that reads a PII column of a base table (resolved per scope)."""
+    out = []
+    for scope in traverse_scope(tree):
+        for col in scope.columns:
+            src = scope.sources.get(col.table)
+            if isinstance(src, exp.Table):
+                meta = catalog.resolve(src)
+                if meta and col.name.lower() in meta.pii:
+                    out.append(col)
+    return out
+
+
+def _small_count_shape(tree: exp.Expression, refs: list[exp.Column]) -> tuple[str, list[int]]:
+    """PII may appear only inside COUNT(...) or in AND-only WHERE/HAVING/JOIN-ON conditions (no OR/NOT/CASE anywhere
+    above it); the query may then output only COUNTs and non-PII GROUP BY keys. Returns (problem, count positions)."""
+    for col in refs:
+        place, node = None, col
+        while node.parent is not None:
+            parent = node.parent
+            if isinstance(parent, _BAD_ANCESTORS):
+                return (f"{col.sql()} is used under {type(parent).__name__.upper()}; when filtering on personal data only "
+                        "AND-combined conditions are allowed (prevents probing one person with OR).", [])
+            if place is None:
+                if isinstance(parent, exp.Count):
+                    place = "count"
+                elif isinstance(parent, (exp.Where, exp.Having)) or (isinstance(parent, exp.Join) and node is parent.args.get("on")):
+                    place = "filter"
+                elif isinstance(parent, (exp.Select, exp.Group, exp.Order, exp.Ordered, exp.Window)):
+                    return (f"{col.sql()} may only be filtered on (WHERE) or counted, not used in the select list, "
+                            "GROUP BY, ORDER BY or a window.", [])
+            node = parent
+    if isinstance(tree, exp.SetOperation):
+        return ("UNION/EXCEPT/INTERSECT is not allowed when filtering on personal data.", [])
+    group = {g.sql() for g in (tree.args.get("group").expressions if tree.args.get("group") else [])}
+    counts = []
+    for i, sel in enumerate(tree.selects):
+        inner = sel.unalias()
+        if isinstance(inner, exp.Count):
+            counts.append(i)
+        elif inner.sql() not in group:
+            return (f"Output {sel.alias_or_name!r}: when filtering on personal data the result may only contain "
+                    "COUNT(...) and GROUP BY columns (small counts are shown as '<5').", [])
+    return "", counts
+
+
+def bucket_small_counts(rows: list[list], count_columns: list[int]) -> list[list]:
+    """Counts below SMALL_COUNT_MIN become '<5' (k-anonymity floor for PII-filtered results)."""
+    out = []
+    for r in rows:
+        r = list(r)
+        for i in count_columns:
+            if isinstance(r[i], (int, float)) and r[i] < SMALL_COUNT_MIN:
+                r[i] = f"<{SMALL_COUNT_MIN}"
+        out.append(r)
+    return out
+
+
 def _time_bounded(tree: exp.Expression, meta: TableMeta) -> bool:
     """True if every scope that reads *meta* bounds it with a comparison on its time column."""
     reads = False
@@ -299,9 +376,41 @@ def _time_bounded(tree: exp.Expression, meta: TableMeta) -> bool:
     return reads
 
 
-# --------------------------------------------------------------------------------------------- SQLAS
+# --------------------------------------------------------------------------------------------- injection / PII text
 
 _ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?\b")
+
+# Text in DATABASE VALUES that tries to instruct a model (indirect prompt injection). Our own patterns; enforcement
+# must not depend on SQLAS (advisory only).
+_INJECTION = re.compile(
+    r"(ignore|disregard|forget|override)\s+(all\s+|any\s+|the\s+|your\s+|previous\s+|prior\s+|above\s+)*"
+    r"(instructions?|rules?|prompts?|guidelines|context)"
+    r"|system\s+prompt|you\s+are\s+now|act\s+as\b|new\s+instructions?|developer\s+mode|jailbreak"
+    r"|<\s*/?\s*(system|assistant|user|instruction)\s*>|\[/?(INST|SYS)\]|<\|im_(start|end)\|>"
+    r"|\b(route|respond|answer|reply)\s+(to|with|as)\s+(unsupported|analytics|lookup)\b"
+    r"|https?://|www\.", re.I)
+_PHONE = re.compile(r"(?<!\d)(?:\+?\d[\d\s().-]{6,}\d)(?!\d)")
+_EMAIL = re.compile(r"\b[\w.%+-]+@[\w.-]+\.[a-z]{2,}\b", re.I)
+
+
+def looks_like_injection(text) -> bool:
+    return isinstance(text, str) and bool(_INJECTION.search(text))
+
+
+def unmasked_contact(text: str) -> str | None:
+    """Our own output PII check: an e-mail address or a phone-like run of >= 10 digits (ISO dates excluded; 8-digit
+    BIRD account numbers are not phones)."""
+    t = _ISO_DATE.sub(" ", str(text))
+    if _EMAIL.search(t):
+        return "email"
+    for m in _PHONE.finditer(t):
+        if sum(ch.isdigit() for ch in m.group()) >= 10:
+            return "phone"
+    return None
+
+
+# --------------------------------------------------------------------------------------------- SQLAS
+
 _BLOCKING_INPUT = ("PROMPT_INJECTION:", "DANGEROUS_INPUT: malicious_sql_intent",
                    "DANGEROUS_INPUT: credential_extraction", "DANGEROUS_INPUT: bypass_attempt")
 

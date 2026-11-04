@@ -13,11 +13,13 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 
 from bankql.agent import Agent
+from bankql.auth import KeyStore, Principal
 from bankql.connectors import QueryRejected, QueryTimeout, jsonable
 from bankql.tools import TOOL_NAMES, ToolError
 
 
-def build_server(agent: Agent) -> MCPServer:
+def build_server(agent: Agent, principal: Principal | None = None) -> MCPServer:
+    """`run_sql` is registered only for a principal whose policy enables it (off by default)."""
     mcp = MCPServer(name="bankql", instructions=(
         "Read-only questions over bank data. Use `ask` for natural-language questions; `lookup` for one client's "
         "or account's records; `run_sql` only for a single SELECT (it is validated and may be refused)."))
@@ -69,6 +71,9 @@ def build_server(agent: Agent) -> MCPServer:
         v = await anyio.to_thread.run_sync(lambda: agent.source(source).validate(sql))
         return {"ok": v.ok, "sql": v.sql, "code": v.code, "reason": v.reason, "warnings": v.warnings}
 
+    if not (principal and principal.policy.run_sql):
+        return mcp
+
     @mcp.tool(description="Run one validated SELECT (guarded: refused unless it passes validate_sql). Max 100 rows.")
     async def run_sql(source: str, sql: str, max_rows: int = 100) -> dict:
         src = agent.source(source)
@@ -92,7 +97,10 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--config", default=os.environ.get("BANKQL_CONFIG_DIR", "config"))
     a = ap.parse_args()
-    server = build_server(Agent.from_config(a.config))
+    agent = Agent.from_config(a.config)
+    # run_sql is enabled only if BANKQL_MCP_API_KEY names a key whose policy has run_sql: true.
+    key = os.environ.get("BANKQL_MCP_API_KEY")
+    server = build_server(agent, KeyStore(a.config).authenticate(key) if key else None)
     if a.transport == "stdio":
         server.run("stdio")
     else:

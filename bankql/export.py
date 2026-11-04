@@ -1,10 +1,13 @@
 """Stream full results to CSV (or Parquet via DuckDB's built-in writer) — big results never go to the LLM or
-the chat; the API serves the file by an unguessable export id."""
+the chat. Each export has a random 128-bit id, is bound to the API key that created it, and expires."""
 from __future__ import annotations
 
 import csv
+import json
+import os
 import re
-import uuid
+import secrets
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,15 +36,40 @@ def _csv_cell(v):
 
 
 class Exporter:
-    def __init__(self, directory: str | Path):
+    def __init__(self, directory: str | Path, ttl_hours: float = 24):
         self.dir = Path(directory)
         self.dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.dir, 0o700)
+        self.ttl_s = ttl_hours * 3600
+
+    def _new(self, owner: str) -> str:
+        eid = secrets.token_hex(16)
+        meta = self.dir / f"{eid}.meta.json"
+        meta.write_text(json.dumps({"owner": owner, "created": time.time()}))
+        os.chmod(meta, 0o600)
+        self.purge()
+        return eid
+
+    def purge(self) -> int:
+        """Delete expired exports (and their metadata). Called on every new export."""
+        n = 0
+        for meta in self.dir.glob("*.meta.json"):
+            try:
+                expired = time.time() - json.loads(meta.read_text())["created"] > self.ttl_s
+            except (ValueError, KeyError, OSError):
+                expired = True
+            if expired:
+                eid = meta.name.split(".")[0]
+                for f in self.dir.glob(f"{eid}.*"):
+                    f.unlink(missing_ok=True)
+                n += 1
+        return n
 
     def export(self, source: Source, sql: str, params: dict | None = None, *, fmt: str = "csv",
-               allow_pii_output: bool = False, preview_rows: int = 100) -> Export:
+               allow_pii_output: bool = False, preview_rows: int = 100, owner: str = "library") -> Export:
         if fmt not in ("csv", "parquet"):
             raise ValueError("fmt must be csv or parquet")
-        eid = uuid.uuid4().hex
+        eid = self._new(owner)
         path = self.dir / f"{eid}.csv"
         n, columns, preview = 0, [], []
         with path.open("w", newline="", encoding="utf-8") as fh:
@@ -67,9 +95,9 @@ class Exporter:
             path = pq
         return Export(eid, path, n, n >= source.cfg.row_cap, columns, preview)
 
-    def write_rows(self, columns: list[str], rows: list[list]) -> Export:
+    def write_rows(self, columns: list[str], rows: list[list], owner: str = "library") -> Export:
         """Export rows already in hand (lookup results) without re-running the query."""
-        eid = uuid.uuid4().hex
+        eid = self._new(owner)
         path = self.dir / f"{eid}.csv"
         with path.open("w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
@@ -77,8 +105,15 @@ class Exporter:
             w.writerows([_csv_cell(v) for v in r] for r in rows)
         return Export(eid, path, len(rows), False, columns, rows[:100])
 
-    def path_for(self, export_id: str, fmt: str = "csv") -> Path | None:
+    def path_for(self, export_id: str, fmt: str = "csv", owner: str = "library") -> Path | None:
+        """The export file, only for its owner and only before it expires; otherwise None (→ 404, no hint why)."""
         if not _ID.match(export_id) or fmt not in ("csv", "parquet"):
             return None
-        p = self.dir / f"{export_id}.{fmt}"
+        p, meta = self.dir / f"{export_id}.{fmt}", self.dir / f"{export_id}.meta.json"
+        try:
+            m = json.loads(meta.read_text())
+        except (OSError, ValueError):
+            return None
+        if not secrets.compare_digest(str(m.get("owner")), owner) or time.time() - m.get("created", 0) > self.ttl_s:
+            return None
         return p if p.exists() else None

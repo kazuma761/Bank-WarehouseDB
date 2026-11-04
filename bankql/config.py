@@ -51,6 +51,8 @@ class AgentSettings(BaseModel):
     summary_rows: int = 5
     exports_dir: str = "data/exports"
     audit_path: str = "data/audit.duckdb"
+    audit_retention_days: int = 90
+    export_ttl_hours: float = 24
 
 
 class FederationConfig(BaseModel):

@@ -1,9 +1,12 @@
-"""Audit log: one row per question in a local DuckDB table (question, route, SQL, row count, latency, refusal)."""
+"""Audit log: one row per question in a local DuckDB table (question, route, SQL, row count, latency, refusal).
+PII is masked before rows get here (bankql.privacy). The file is 0600 in a 0700 directory; rows older than
+`retention_days` are deleted at start-up and every 1000 writes."""
 from __future__ import annotations
 
 import json
+import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import duckdb
@@ -17,13 +20,22 @@ COLUMNS = ["ts", "request_id", "session_id", "surface", "source", "question", "s
 
 
 class AuditLog:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, retention_days: int = 90):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.retention_days = retention_days
         self._lock = threading.Lock()
+        self._writes = 0
         self._con = duckdb.connect(str(self.path))
         self._con.execute(_DDL)
         self._con.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_id VARCHAR")  # older audit files
+        os.chmod(self.path, 0o600)
+        self.purge()
+
+    def purge(self) -> None:
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=self.retention_days)
+        with self._lock:
+            self._con.execute("DELETE FROM audit_log WHERE ts < ?", [cutoff])
 
     def write(self, **row) -> None:
         row = {c: row.get(c) for c in COLUMNS}
@@ -32,6 +44,9 @@ class AuditLog:
         with self._lock:
             self._con.execute(f"INSERT INTO audit_log ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
                               [row[c] for c in COLUMNS])
+            self._writes += 1
+        if self._writes % 1000 == 0:
+            self.purge()
 
     def recent(self, n: int = 20) -> list[dict]:
         with self._lock:

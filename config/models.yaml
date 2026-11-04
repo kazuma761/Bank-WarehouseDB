@@ -38,4 +38,6 @@ agent:
   max_validation_attempts: 2  # refuse after the SQL fails validation twice
   summary_rows: 5             # rows the summary model may see
   exports_dir: data/exports
-  audit_path: data/audit.duckdb
+  audit_path: data/audit.duckdb   # 0600; PII masked before writing
+  audit_retention_days: 90
+  export_ttl_hours: 24            # exports are bound to the creating API key and deleted after this

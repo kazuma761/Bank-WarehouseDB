@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import hmac
 import json
 import os
 import queue
@@ -14,10 +13,11 @@ import uuid
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from bankql.agent import Agent, AskResult
+from bankql.auth import Forbidden, KeyStore, Principal, RateLimited
 from bankql.connectors import QueryRejected, QueryTimeout, jsonable
 
 MODEL_NAME = "bankql"
@@ -41,25 +41,40 @@ class SqlRequest(BaseModel):
     max_rows: int = Field(default=100, ge=1, le=10_000)
 
 
-def _keys() -> list[bytes]:
-    return [k.strip().encode() for k in os.environ.get("BANKQL_API_KEYS", "").split(",") if k.strip()]
-
-
-def require_key(x_api_key: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> None:
-    """X-API-Key or `Authorization: Bearer` (OpenAI clients). Constant-time compare against every key; with no
-    keys configured, everything except /health is refused (fail closed)."""
-    given = (x_api_key or (authorization or "").removeprefix("Bearer ").strip()).encode()
-    ok = False
-    for k in _keys():
-        ok |= hmac.compare_digest(given, k)
-    if not ok:
-        raise HTTPException(401, "missing or invalid API key", headers={"WWW-Authenticate": "Bearer"})
-
-
-def create_app(agent: Agent) -> FastAPI:
+def create_app(agent: Agent, keys: KeyStore | None = None) -> FastAPI:
+    """`keys`: API keys and per-key policy (default: BANKQL_API_KEYS + config/api_keys.yaml). No keys configured →
+    every /v1 call is refused (fail closed)."""
     app = FastAPI(title="BankQL", version="0.1.0",
                   description="Local-LLM, read-only natural-language → SQL for bank data.")
-    auth = [Depends(require_key)]
+    store = keys or KeyStore(agent.cfg.root / "config")
+
+    def principal(x_api_key: str | None = Header(default=None), authorization: str | None = Header(default=None)) -> Principal:
+        """X-API-Key or `Authorization: Bearer`."""
+        p = store.authenticate(x_api_key or (authorization or "").removeprefix("Bearer ").strip())
+        if p is None:
+            raise HTTPException(401, "missing or invalid API key", headers={"WWW-Authenticate": "Bearer"})
+        return p
+
+    def allowed_src(p: Principal, name: str | None):
+        name = name or next((n for n in agent.sources if p.policy.allows_source(n)), None)
+        if name is None or not p.policy.allows_source(name):
+            raise HTTPException(403, "this API key may not use that source")
+        if name not in agent.sources:
+            raise HTTPException(404, "unknown source")  # no list: a key only sees /v1/sources it may use
+        return agent.sources[name]
+
+    @app.exception_handler(Forbidden)
+    async def _forbidden(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=403)
+
+    @app.exception_handler(RateLimited)
+    async def _limited(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=429, headers={"Retry-After": str(exc.retry_after_s)})
+
+    @app.exception_handler(Exception)
+    async def _internal(request, exc):  # never a traceback or internals in a response
+        return JSONResponse({"detail": "internal error"}, status_code=500)
+
 
     @app.get("/demo", include_in_schema=False)
     def demo():
@@ -69,23 +84,27 @@ def create_app(agent: Agent) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "sources": list(agent.sources)}
+        return {"status": "ok"}  # unauthenticated: reveals nothing about sources
 
-    @app.post("/v1/ask", response_model=AskResult, dependencies=auth,
-              responses={200: {"content": {"text/event-stream": {}}, "description": "JSON, or SSE when stream=true"}})
-    def ask(req: AskRequest):
+    @app.post("/v1/ask", response_model=AskResult,
+              responses={200: {"content": {"text/event-stream": {}}, "description": "JSON, or SSE when stream=true"},
+                         403: {"description": "source not allowed for this key"}, 429: {"description": "rate limited"}})
+    def ask(req: AskRequest, p: Principal = Depends(principal)):
+        src = allowed_src(p, req.source)
+        kw = dict(evidence=req.evidence, surface="rest", user_id=req.user_id, principal=p)
         if not req.stream:
-            return agent.ask(req.question, req.source, req.session_id, evidence=req.evidence, surface="rest",
-                             user_id=req.user_id)
+            return agent.ask(req.question, src.name, req.session_id, **kw)
         q: queue.Queue = queue.Queue()
 
         def work():
             try:
-                r = agent.ask(req.question, req.source, req.session_id, evidence=req.evidence, surface="rest",
-                              user_id=req.user_id, on_event=lambda stage, data: q.put(("stage", {"stage": stage, **data})))
+                r = agent.ask(req.question, src.name, req.session_id,
+                              on_event=lambda stage, data: q.put(("stage", {"stage": stage, **data})), **kw)
                 q.put(("result", r.model_dump()))
-            except Exception as e:  # noqa: BLE001
-                q.put(("error", {"error": str(e)[:500]}))
+            except RateLimited as e:
+                q.put(("error", {"error": str(e), "status": 429}))
+            except Exception:  # noqa: BLE001 — no internals in the stream
+                q.put(("error", {"error": "internal error"}))
             q.put(None)
 
         threading.Thread(target=work, daemon=True).start()
@@ -95,10 +114,12 @@ def create_app(agent: Agent) -> FastAPI:
                 yield f"event: {item[0]}\ndata: {json.dumps(item[1], default=str)}\n\n"
         return StreamingResponse(events(), media_type="text/event-stream")
 
-    @app.get("/v1/sources", dependencies=auth)
-    def sources():
+    @app.get("/v1/sources")
+    def sources(p: Principal = Depends(principal)):
         out = []
         for n, s in agent.sources.items():
+            if not p.policy.allows_source(n):
+                continue
             try:
                 as_of, available = str(s.as_of()), True
             except Exception:  # noqa: BLE001 — e.g. its URL env var is not set
@@ -107,50 +128,54 @@ def create_app(agent: Agent) -> FastAPI:
                         "available": available})
         return out
 
-    @app.get("/v1/sources/{source}/tables", dependencies=auth)
-    def tables(source: str):
-        src = _src(agent, source)
+    @app.get("/v1/sources/{source}/tables")
+    def tables(source: str, p: Principal = Depends(principal)):
+        src = allowed_src(p, source)
         return [src.describe_table(m.name) for m in src.catalog.tables.values()] if not hasattr(src, "members") else \
             [{"table": f"{q}.{m.name}", "description": ""} for (q, _), m in src.catalog.tables.items()]
 
-    @app.post("/v1/sql/validate", dependencies=auth)
-    def validate(req: SqlRequest):
-        v = _src(agent, req.source).validate(req.sql)
+    @app.post("/v1/sql/validate")
+    def validate(req: SqlRequest, p: Principal = Depends(principal)):
+        v = allowed_src(p, req.source).validate(req.sql)
         return {"ok": v.ok, "sql": v.sql, "code": v.code, "reason": v.reason, "tables": v.tables, "warnings": v.warnings}
 
-    @app.post("/v1/sql/run", dependencies=auth)
-    def run(req: SqlRequest):
-        src = _src(agent, req.source)
+    @app.post("/v1/sql/run", responses={403: {"description": "run_sql not enabled for this key"}})
+    def run(req: SqlRequest, p: Principal = Depends(principal)):
+        if not p.policy.run_sql:
+            raise HTTPException(403, "run_sql is not enabled for this API key (config/api_keys.yaml)")
+        src = allowed_src(p, req.source)
+        agent.limiter.hit(p, "ask")
         t0 = time.perf_counter()
         try:
-            exp = agent.exporter.export(src, req.sql, preview_rows=req.max_rows)
+            exp = agent.exporter.export(src, req.sql, preview_rows=req.max_rows, owner=p.key_id)
         except QueryRejected as e:
             raise HTTPException(400, {"code": e.validation.code, "reason": e.validation.reason}) from e
         except QueryTimeout as e:
             raise HTTPException(408, str(e)) from e
         sql = src.validate(req.sql).sql
-        agent.audit.write(request_id=uuid.uuid4().hex, surface="rest_sql", source=req.source, question=None, route="sql",
-                          sql=sql, row_count=exp.rows, latency_ms=round((time.perf_counter() - t0) * 1000, 1), refused=False)
+        agent.audit.write(request_id=uuid.uuid4().hex, surface=f"rest_sql:{p.key_id}", source=src.name, question=None,
+                          route="sql", sql=agent.scrubber(src.name).sql(sql), row_count=exp.rows,
+                          latency_ms=round((time.perf_counter() - t0) * 1000, 1), refused=False)
         return {"sql": sql, "columns": exp.columns, "rows": [[jsonable(v) for v in r] for r in exp.preview],
                 "row_count": exp.rows, "truncated": exp.truncated, "export_id": exp.id}
 
-    @app.get("/v1/results/{export_id}.{fmt}", dependencies=auth)
-    def result_file(export_id: str, fmt: str):
-        p = agent.exporter.path_for(export_id, fmt)
-        if p is None:
+    @app.get("/v1/results/{export_id}.{fmt}")
+    def result_file(export_id: str, fmt: str, p: Principal = Depends(principal)):
+        path = agent.exporter.path_for(export_id, fmt, owner=p.key_id)
+        if path is None:  # unknown, expired, or another key's export: same answer
             raise HTTPException(404, "no such export")
-        return FileResponse(p, media_type="text/csv" if fmt == "csv" else "application/vnd.apache.parquet",
+        return FileResponse(path, media_type="text/csv" if fmt == "csv" else "application/vnd.apache.parquet",
                             filename=f"bankql-{export_id}.{fmt}")
 
     # ---------------------------------------------------------------------------------- OpenAI-compatible
 
-    @app.get("/v1/models", dependencies=auth)
-    def models():
-        ids = [MODEL_NAME] + [f"{MODEL_NAME}:{s}" for s in agent.sources]
+    @app.get("/v1/models")
+    def models(p: Principal = Depends(principal)):
+        ids = [MODEL_NAME] + [f"{MODEL_NAME}:{s}" for s in agent.sources if p.policy.allows_source(s)]
         return {"object": "list", "data": [{"id": i, "object": "model", "owned_by": "bankql"} for i in ids]}
 
-    @app.post("/v1/chat/completions", dependencies=auth)
-    async def chat(request: Request):
+    @app.post("/v1/chat/completions")
+    async def chat(request: Request, p: Principal = Depends(principal)):
         body = await request.json()
         model = str(body.get("model") or MODEL_NAME)
         if not (model == MODEL_NAME or model.startswith(f"{MODEL_NAME}:")):
@@ -163,8 +188,9 @@ def create_app(agent: Agent) -> FastAPI:
         history = [{"role": m["role"], "content": _text(m["content"])} for m in msgs[:-1]][-12:]
         import anyio
 
-        r = await anyio.to_thread.run_sync(lambda: agent.ask(question, source, body.get("user"), history=history,
-                                                             surface="openai"))
+        src = allowed_src(p, source)
+        r = await anyio.to_thread.run_sync(lambda: agent.ask(question, src.name, body.get("user"), history=history,
+                                                             surface="openai", principal=p))
         content = render_markdown(r)
         cid, created = f"chatcmpl-{r.request_id}", int(time.time())
         if body.get("stream"):
@@ -180,13 +206,6 @@ def create_app(agent: Agent) -> FastAPI:
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, "bankql": r.model_dump()}
 
     return app
-
-
-def _src(agent: Agent, name: str):
-    try:
-        return agent.source(name)
-    except KeyError as e:
-        raise HTTPException(404, str(e).strip("'\"")) from e
 
 
 def _text(content) -> str:

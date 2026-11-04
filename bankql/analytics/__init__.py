@@ -19,7 +19,7 @@ from typing import Protocol
 from bankql.analytics.mercer.core.models import AnnotatedSchema, ColumnSchema, ExecutionResult, RawSchema, SQLCandidate, TableSchema
 from bankql.analytics.mercer.db.sandbox import ReadOnlySandbox
 from bankql.connectors import QueryRejected, QueryTimeout, Source, jsonable
-from bankql.guardrails import repair_reserved_tables
+from bankql.guardrails import looks_like_injection, repair_reserved_tables
 from bankql.semantic.mercer_mappings import write_mappings
 
 _QUOTE = {"mysql": "`order`", "bigquery": "`order`", "tsql": "[order]"}
@@ -140,13 +140,17 @@ class MercerEngine:
                                          is_foreign_key=ref is not None, references_table=ref and ref[0],
                                          references_column=ref and ref[1]))
             tables.append(TableSchema(name=meta.name, columns=cols))
+        # PII columns are never sampled (their values are not even read), so they can't reach M-Schema prompts, the
+        # entity index or the Redis schema cache. Sampling mutates the shared ColumnSchema objects in place.
+        sampled = [TableSchema(name=t.name, columns=[c for c in t.columns
+                                                     if c.name.lower() not in source.catalog.tables[(None, t.name.lower())].pii])
+                   for t in tables]
         with source.engine.connect() as con:
-            _sample_values_for_tables(con, tables)
-        for t in tables:  # never put PII values into prompts as inline samples
-            meta = source.catalog.tables[(None, t.name.lower())]
+            _sample_values_for_tables(con, sampled)
+        for t in tables:
             for c in t.columns:
-                if c.name.lower() in meta.pii:
-                    c.sample_values = []
+                # PII: never sampled; others: drop values that try to instruct the model (indirect prompt injection)
+                c.sample_values = [v for v in (c.sample_values or []) if not looks_like_injection(v)]
         path = write_mappings(source.semantic, self.work_dir / f"{source.name}_mappings.yaml",
                               {m.name: list(m.columns) for m in source.catalog.tables.values()})
         schema = SemanticMapper(str(path)).annotate(RawSchema(db_url_hash=key, tables=tables))

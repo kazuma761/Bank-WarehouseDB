@@ -8,6 +8,7 @@ Every question is written to the DuckDB audit log.
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 import uuid
@@ -19,12 +20,14 @@ import httpx
 from pydantic import BaseModel, Field
 
 from bankql.audit import AuditLog
+from bankql.auth import LIBRARY, Forbidden, Principal, RateLimited, RateLimiter
 from bankql.config import AppConfig, load_config
 from bankql.connectors import QueryRejected, QueryTimeout, Source, build_sources, jsonable
 from bankql.connectors.federation import build_federations
 from bankql.export import Exporter
-from bankql.guardrails import SqlasGuard
+from bankql.guardrails import SqlasGuard, looks_like_injection, unmasked_contact
 from bankql.llm import LLMClient, OpenAICompatClient
+from bankql.privacy import Scrubber
 from bankql.resolver import Resolver
 from bankql.router import Router, ToolCall, resolve_period, ungrounded_numbers
 from bankql.tools import LookupTools, ToolError, ToolResult
@@ -106,11 +109,13 @@ class Agent:
 
             engine = build_engine(cfg)
         self.engine = engine
-        self.audit = audit or AuditLog(cfg.path(cfg.agent.audit_path))
-        self.exporter = exporter or Exporter(cfg.path(cfg.agent.exports_dir))
+        self.audit = audit or AuditLog(cfg.path(cfg.agent.audit_path), cfg.agent.audit_retention_days)
+        self.exporter = exporter or Exporter(cfg.path(cfg.agent.exports_dir), cfg.agent.export_ttl_hours)
         self.sessions = Sessions(cfg.agent.session_turns)
         self._tools: dict[str, LookupTools] = {}
         self._resolvers: dict[str, Resolver] = {}
+        self._scrubbers: dict[str, Scrubber] = {}
+        self.limiter = RateLimiter()
 
     @classmethod
     def from_config(cls, config_dir: str | Path = "config", **kw) -> "Agent":
@@ -126,6 +131,11 @@ class Agent:
             self._tools[name] = LookupTools(self.source(name))
         return self._tools[name]
 
+    def scrubber(self, name: str) -> Scrubber:
+        if name not in self._scrubbers:
+            self._scrubbers[name] = Scrubber(self.source(name))
+        return self._scrubbers[name]
+
     def resolver(self, name: str) -> Resolver:
         if name not in self._resolvers:
             self._resolvers[name] = Resolver(self.source(name))
@@ -135,7 +145,7 @@ class Agent:
 
     def ask(self, question: str, source: str | None = None, session_id: str | None = None, *,
             history: list[dict] | None = None, evidence: str | None = None, surface: str = "library",
-            user_id: str | None = None,
+            user_id: str | None = None, principal: Principal = LIBRARY,
             on_event: Callable[[str, dict], None] | None = None) -> AskResult:
         t0 = time.perf_counter()
         source = source or next(iter(self.cfg.sources))
@@ -143,15 +153,18 @@ class Agent:
         res = AskResult(request_id=uuid.uuid4().hex, session_id=session_id, source=source, question=question,
                         standalone_question=question, route="refused", status="refused")
         timer = _Timer(res.timings_ms)
+        audit_extra: list[str] = []  # details for the audit log only, never returned to the caller
+        policy_exc: Exception | None = None
         try:
+            self.limiter.hit(principal, "ask")
+            if not principal.policy.allows_source(source):
+                raise Forbidden(f"this API key may not use source {source!r}")
             src = self.source(source)
-            with timer("input_guardrail"):
+            with timer("input_guardrail"):  # SQLAS is advisory: warnings only; enforcement is validator + PII checks
                 g = self.guard.check_input(question)
-            res.warnings += g.warnings
-            emit("input_guardrail", {"blocked": g.blocked})
-            if g.blocked:
-                raise _Refuse(g.reason)
-            hist = history if history is not None else self.sessions.history(session_id)
+            res.warnings += g.warnings + ([f"sqlas_input_would_block: {g.reason}"] if g.blocked else [])
+            emit("input_guardrail", {"advisory_block": g.blocked})
+            hist = self._safe_history(history, src) if history is not None else self.sessions.history(session_id)
             if hist:
                 with timer("rewrite"):
                     res.standalone_question, w = self.router.rewrite(question, hist)
@@ -169,15 +182,19 @@ class Agent:
             if d.intent == "unsupported":
                 raise _Refuse(f"That's outside what I can answer from this bank data ({d.reason}).")
             if d.intent == "lookup":
+                self.limiter.hit(principal, "lookup", max(1, len(d.tools)))
                 res.route, res.intent = "lookup", [t.tool for t in d.tools]
                 with timer("lookup"):
-                    self._lookup(res, src, d.tools, emit)
+                    self._lookup(res, src, d.tools, emit, principal.key_id)
             else:
                 res.route, res.intent = "analytics", ["analytics"]
-                self._analytics(res, src, evidence, timer, emit)
+                self._analytics(res, src, evidence, timer, emit, principal.key_id)
             with timer("output_guardrail"):
                 self._output_guard(res, src)
             res.status = "ok"
+        except (Forbidden, RateLimited) as e:  # re-raised after auditing: the API maps them to 403 / 429
+            policy_exc = e
+            res.refusal_reason = res.summary = str(e)
         except _Refuse as r:
             res.route, res.status, res.refusal_reason, res.choices = r.route, r.status, r.reason, r.choices
             res.summary = r.reason
@@ -185,21 +202,46 @@ class Agent:
             res.refusal_reason = res.summary = str(e).strip("'\"")
         except httpx.HTTPError as e:  # llama.cpp server down or erroring: say so, don't 500
             res.route, res.status = "error", "error"
-            res.refusal_reason = res.summary = (f"The local model server is not reachable or failed "
-                                                f"({type(e).__name__}: {str(e)[:160]}). Is llama-server running?")
-        except Exception as e:  # noqa: BLE001 — never leak a traceback to the caller; it is in the audit log
+            res.refusal_reason = res.summary = "The local model server is not reachable or failed. Is llama-server running?"
+            audit_extra.append(f"model_server_error: {type(e).__name__}: {str(e)[:300]}")
+        except Exception as e:  # noqa: BLE001 — no traceback or internals to the caller; details go to the audit log
             res.route, res.status = "error", "error"
-            res.refusal_reason = res.summary = f"Internal error ({type(e).__name__}); the request was logged."
-            res.warnings.append(f"internal_error: {type(e).__name__}: {str(e)[:300]}")
+            res.refusal_reason = res.summary = f"Internal error; reference {res.request_id}."
+            audit_extra.append(f"internal_error: {type(e).__name__}: {str(e)[:300]}")
         res.timings_ms["total"] = round((time.perf_counter() - t0) * 1000, 1)
         emit("done", {"status": res.status})
-        self.sessions.add(session_id, question, res.summary)
-        self.audit.write(request_id=res.request_id, session_id=session_id, user_id=user_id, surface=surface, source=source,
-                         question=question, standalone_question=res.standalone_question, route=res.route,
-                         intent=",".join(res.intent), sql=res.sql, row_count=res.row_count,
-                         latency_ms=res.timings_ms["total"], refused=res.status != "ok",
-                         refusal_reason=res.refusal_reason, warnings=res.warnings)
+        self.sessions.add(session_id, question, _history_text(res))
+        self._audit(res, source, session_id, user_id, surface, principal, audit_extra)
+        if policy_exc is not None:
+            raise policy_exc
         return res
+
+    def _audit(self, res: AskResult, source: str, session_id, user_id, surface, principal: Principal, extra) -> None:
+        """Audit row with PII masked (names from client_profile, contacts, PII literals in SQL)."""
+        try:
+            sc = self.scrubber(source) if source in self.sources else None
+        except Exception:  # noqa: BLE001
+            sc = None
+        t = (lambda x: sc.text(x)) if sc else (lambda x: x)
+        q = (lambda x: sc.sql(x)) if sc else (lambda x: x)
+        self.audit.write(request_id=res.request_id, session_id=session_id, user_id=user_id,
+                         surface=f"{surface}:{principal.key_id}", source=source, question=t(res.question),
+                         standalone_question=t(res.standalone_question), route=res.route, intent=",".join(res.intent),
+                         sql=q(res.sql), row_count=res.row_count, latency_ms=res.timings_ms["total"],
+                         refused=res.status != "ok", refusal_reason=t(res.refusal_reason),
+                         warnings=[t(w) for w in res.warnings + extra])
+
+    def _safe_history(self, history: list[dict], src: Source) -> list[dict]:
+        """History supplied by a client (e.g. OpenAI-style messages) goes back into a model prompt: keep user turns,
+        reduce assistant turns to their first line and mask PII values from the database."""
+        sc = self.scrubber(src.name)
+        out = []
+        for h in history:
+            content = str(h.get("content", ""))
+            if h.get("role") == "assistant":
+                content = sc.text(content.strip().splitlines()[0] if content.strip() else "")
+            out.append({"role": h.get("role"), "content": content})
+        return out
 
     # ------------------------------------------------------------------------------------------ lookup
 
@@ -234,7 +276,7 @@ class Agent:
                           status="needs_clarification", choices=choices)
         return accts.rows[0][0]
 
-    def _lookup(self, res: AskResult, src: Source, calls: list[ToolCall], emit) -> None:
+    def _lookup(self, res: AskResult, src: Source, calls: list[ToolCall], emit, owner: str) -> None:
         tools = self.tools(src.name)
         for call in calls:
             if call.tool == "get_statement":
@@ -250,21 +292,21 @@ class Agent:
             else:
                 tr = getattr(tools, call.tool)(self._client_id(src.name, call))
             emit("tool", {"tool": tr.tool, "rows": len(tr.rows)})
-            res.results.append(self._result_set(tr, src.cfg.preview_rows))
+            res.results.append(self._result_set(tr, src.cfg.preview_rows, owner))
         first = res.results[0]
         res.sql = ";\n".join(r.sql for r in res.results)
         res.columns, res.rows, res.row_count, res.export_id = first.columns, first.rows, first.row_count, first.export_id
         res.summary = " ".join(_lookup_summary(r) for r in res.results)
 
-    def _result_set(self, tr: ToolResult, preview: int) -> ResultSet:
-        exp = self.exporter.write_rows(tr.columns, tr.rows) if len(tr.rows) > preview else None
+    def _result_set(self, tr: ToolResult, preview: int, owner: str) -> ResultSet:
+        exp = self.exporter.write_rows(tr.columns, tr.rows, owner=owner) if len(tr.rows) > preview else None
         return ResultSet(name=tr.tool, sql=tr.sql, params=tr.params, columns=tr.columns,
                          rows=[[jsonable(v) for v in r] for r in tr.rows[:preview]], row_count=len(tr.rows),
                          truncated=tr.truncated, export_id=exp.id if exp else None, legend=tr.legend, notes=tr.notes)
 
     # ------------------------------------------------------------------------------------------ analytics
 
-    def _analytics(self, res: AskResult, src: Source, evidence, timer, emit) -> None:
+    def _analytics(self, res: AskResult, src: Source, evidence, timer, emit, owner: str) -> None:
         feedback, attempts = None, self.cfg.agent.max_validation_attempts
         for attempt in range(1, attempts + 1):
             with timer(f"analytics_attempt_{attempt}"):
@@ -276,11 +318,11 @@ class Agent:
                 break
             feedback = ar.error[:300]
         else:
-            raise _Refuse(f"{NOT_SURE} — I couldn't produce a valid query after {attempts} attempts ({feedback}).")
+            raise _Refuse(f"{NOT_SURE} — I couldn't produce a valid query after {attempts} attempts ({_public(feedback)}).")
         res.sql = ar.sql
         try:
             with timer("execute"):
-                exp = self.exporter.export(src, ar.sql, preview_rows=src.cfg.preview_rows)
+                exp = self.exporter.export(src, ar.sql, preview_rows=src.cfg.preview_rows, owner=owner)
         except (QueryRejected, QueryTimeout) as e:
             raise _Refuse(f"{NOT_SURE} — the query could not be run safely ({e}).") from e
         rows = [[jsonable(v) for v in r] for r in exp.preview]
@@ -308,8 +350,13 @@ class Agent:
         n = self.cfg.agent.summary_rows
         fallback = f"{res.row_count:,} row{'s' if res.row_count != 1 else ''} returned" + (
             f"; first: {', '.join(f'{c}={v}' for c, v in zip(res.columns, res.rows[0]))}." if res.rows else ".")
-        text = self.router.summarize(res.standalone_question, res.columns, res.rows[:n], res.row_count)
+        # Indirect prompt injection: database text that tries to instruct the model is not shown to it.
+        rows = [["[filtered]" if looks_like_injection(v) else v for v in r] for r in res.rows[:n]]
+        text = self.router.summarize(res.standalone_question, res.columns, rows, res.row_count)
         if not text:
+            return fallback
+        if looks_like_injection(text) or unmasked_contact(text):
+            res.warnings.append("summary_rejected: instruction-like text or contact details — replaced by a template summary")
             return fallback
         bad = ungrounded_numbers(text, res.rows[:n], [res.row_count, *res.standalone_question.split()])
         if bad:
@@ -320,14 +367,18 @@ class Agent:
     # ------------------------------------------------------------------------------------------ output
 
     def _output_guard(self, res: AskResult, src: Source) -> None:
+        """Enforcement is ours: PII-column cells and the summary must not carry an unmasked phone or e-mail.
+        SQLAS check_output runs on the same text as an advisory signal only."""
         pii_cols = {c for m in src.catalog.tables.values() for c in m.pii}
         cells = [[str(v) for c, v in zip(rs.columns, row) if c.lower() in pii_cols and v is not None]
                  for rs in res.results for row in rs.rows]
-        g = self.guard.check_output(res.summary, [c for c in cells if c])
-        res.warnings += g.warnings
-        if g.blocked:
+        cells = [c for c in cells if c]
+        g = self.guard.check_output(res.summary, cells)
+        res.warnings += [w.replace("sqlas_output:", "sqlas_output (advisory):") for w in g.warnings]
+        hit = next((k for k in (unmasked_contact(v) for row in cells for v in row) if k), None) or unmasked_contact(res.summary)
+        if hit:
             res.results, res.rows, res.columns = [], [], []
-            raise _Refuse(f"The answer was withheld by the output guardrail ({g.reason}).")
+            raise _Refuse(f"The answer was withheld: it would show an unmasked {hit}.")
 
 
 class _Timer:
@@ -345,6 +396,26 @@ class _Timer:
                 sink[name] = round((time.perf_counter() - self.t) * 1000, 1)
                 return False
         return _T()
+
+
+_DRIVER_NOISE = re.compile(r"\[SQL:.*|\[parameters:.*|\(Background on this error.*|\(\w+\.[\w.]+\)\s*", re.S)
+
+
+def _public(msg: str | None) -> str:
+    """Error text safe to return: first line, without driver wrappers, SQL echoes or connection details."""
+    m = _DRIVER_NOISE.sub("", str(msg or "")).strip().splitlines()
+    m = m[0] if m else "unknown error"
+    if re.search(r"connection|password|host=|port \d+|authentication", m, re.I):
+        return "database error"
+    return m[:200]
+
+
+def _history_text(res: "AskResult") -> str:
+    """What the next turn's rewrite prompt may see about this answer: no PII values from the database."""
+    if res.status == "needs_clarification":
+        ids = [str(c.get("client_id") or c.get("account_id")) for c in res.choices]
+        return f"I asked the user to choose one of: {', '.join(ids)}."
+    return res.summary
 
 
 def _lookup_summary(r: ResultSet) -> str:

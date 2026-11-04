@@ -22,10 +22,10 @@ def data(result):
     return json.loads(result.content[0].text)
 
 
-async def test_tools_are_listed(server):
+async def test_tools_are_listed_and_run_sql_off_by_default(server):
     async with Client(server) as c:
         names = {t.name for t in (await c.list_tools()).tools}
-    assert names == {"ask", "lookup", "list_sources", "list_tables", "describe_table", "validate_sql", "run_sql"}
+    assert names == {"ask", "lookup", "list_sources", "list_tables", "describe_table", "validate_sql"}
 
 
 async def test_ask_lookup_and_analytics(server):
@@ -52,7 +52,10 @@ async def test_catalog_tools(server):
     assert "trans" in tables and desc["time_column"] == "date"
 
 
-async def test_validate_and_guarded_run(server):
+async def test_validate_and_guarded_run(make_agent):
+    from bankql.auth import Policy, Principal
+
+    server = build_server(make_agent(agent_fake({})), Principal("ops", Policy(run_sql=True)))
     async with Client(server) as c:
         v = data(await c.call_tool("validate_sql", {"source": "financial", "sql": "WITH x AS (DELETE FROM loan RETURNING *) SELECT * FROM x"}))
         ok = data(await c.call_tool("run_sql", {"source": "financial", "sql": "SELECT COUNT(*) AS n FROM loan"}))

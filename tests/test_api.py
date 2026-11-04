@@ -21,8 +21,8 @@ def client(make_agent, monkeypatch):
     return TestClient(create_app(agent))
 
 
-def test_health_needs_no_key(client):
-    assert client.get("/health").json()["status"] == "ok"
+def test_health_needs_no_key_and_reveals_nothing(client):
+    assert client.get("/health").json() == {"status": "ok"}
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong"}, {"Authorization": "Bearer wrong"}, {"X-API-Key": ""}])
@@ -77,12 +77,22 @@ def test_sql_validate(client):
     assert ok["ok"] and not bad["ok"] and bad["code"] == "not_select"
 
 
-def test_sql_run_is_guarded(client):
-    r = client.post("/v1/sql/run", json={"source": "bank_demo", "sql": "SELECT A3, COUNT(*) AS n FROM district GROUP BY A3 ORDER BY A3"},
-                    headers=H)
+def test_sql_run_off_by_default(client):
+    r = client.post("/v1/sql/run", json={"source": "bank_demo", "sql": "SELECT 1"}, headers=H)
+    assert r.status_code == 403 and "run_sql" in r.json()["detail"]
+
+
+def test_sql_run_is_guarded_for_enabled_key(make_agent, tmp_path, monkeypatch):
+    from bankql.auth import KeyStore, hash_key
+
+    monkeypatch.setenv("BANKQL_API_KEYS", "")
+    (tmp_path / "api_keys.yaml").write_text(f"keys:\n  - id: ops\n    sha256: {hash_key('ops-key')}\n    run_sql: true\n")
+    c = TestClient(create_app(make_agent(agent_fake({})), keys=KeyStore(tmp_path)))
+    h = {"X-API-Key": "ops-key"}
+    r = c.post("/v1/sql/run", json={"source": "bank_demo", "sql": "SELECT A3, COUNT(*) AS n FROM district GROUP BY A3 ORDER BY A3"}, headers=h)
     assert r.status_code == 200 and r.json()["row_count"] == 8 and r.json()["export_id"]
     for sql in ["DROP TABLE account", "SELECT full_name FROM client_profile", "SELECT * FROM trans"]:
-        assert client.post("/v1/sql/run", json={"source": "bank_demo", "sql": sql}, headers=H).status_code == 400
+        assert c.post("/v1/sql/run", json={"source": "bank_demo", "sql": sql}, headers=h).status_code == 400
 
 
 def test_openapi_spec_lists_endpoints(client):
