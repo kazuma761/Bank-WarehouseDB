@@ -242,9 +242,11 @@ def render_markdown(r: AskResult) -> str:
     return "\n\n".join(x for x in out if x)
 
 
-def __getattr__(name):  # `uvicorn bankql.api:app` builds the agent from ./config on first access
+def __getattr__(name):  # `uvicorn bankql.api:app` builds the agent from ./config on first access (and warms it)
     if name == "app":
         global app
-        app = create_app(Agent.from_config(os.environ.get("BANKQL_CONFIG_DIR", "config")))
+        agent = Agent.from_config(os.environ.get("BANKQL_CONFIG_DIR", "config"))
+        threading.Thread(target=agent.warm, daemon=True, name="bankql-warm").start()
+        app = create_app(agent)
         return app
     raise AttributeError(name)

@@ -69,6 +69,9 @@ def make_agent(cfg, sources, tmp_path):
 
     def make(router_llm, sql_answers=None, fix=None, mode="fast"):
         eng = MercerEngine(mercer_fake(sql_answers or {}, fix=fix), mode=mode, work_dir=tmp_path / "m")
+        from bankql.verified import VerifiedQueries
+
         return Agent(cfg, router_llm=router_llm, engine=eng, sources=dict(sources),
-                     audit=AuditLog(tmp_path / "audit.duckdb"), exporter=Exporter(tmp_path / "exports"))
+                     audit=AuditLog(tmp_path / "audit.duckdb"), exporter=Exporter(tmp_path / "exports"),
+                     verified=VerifiedQueries(tmp_path / "verified.json"))
     return make

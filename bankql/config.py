@@ -32,6 +32,8 @@ class ModelEndpoint(BaseModel):
     logprobs: bool = True
     confidence_threshold: float = 0.6
     mode: str = "fast"
+    link_schema: str = "auto"
+    max_tokens: int = 1024
     redis_url: str = "redis://localhost:6379/0"
     redis_url_env: str | None = None
 
@@ -53,6 +55,8 @@ class AgentSettings(BaseModel):
     audit_path: str = "data/audit.duckdb"
     audit_retention_days: int = 90
     export_ttl_hours: float = 24
+    verified_cache: bool = True
+    verified_cache_path: str = "data/verified_queries.json"
 
 
 class FederationConfig(BaseModel):

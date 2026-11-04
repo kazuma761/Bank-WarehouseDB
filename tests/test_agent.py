@@ -166,3 +166,33 @@ def test_query_reading_no_table_is_refused(make_agent, src):
     a = make_agent(agent_fake({"transactions": route("analytics")}), {"transactions": "SELECT COUNT(*) FROM trans"}, fix="SELECT 1")
     r = a.ask("How many transactions are there?", source=src.name)
     assert r.status == "refused" and "does not read any table" in r.refusal_reason
+
+
+
+def test_verified_cache_skips_router_and_sql_generation(make_agent, src):
+    n = src.run(DEBT_SQL).rows[0][0]
+    router = agent_fake({"in debt": route("analytics")}, summary=f"There are {n} loans in debt.")
+    a = make_agent(router, {"in debt": DEBT_SQL})
+    first = a.ask(DEBT_Q, source=src.name)
+    calls_after_first = len(router.calls) + len(a.engine.backend.calls)
+    again = a.ask("how many LOANS are in debt??", source=src.name)  # same after normalisation
+    assert first.status == again.status == "ok" and again.rows == first.rows
+    assert "verified_query_cache_hit" in again.warnings and "router" not in again.timings_ms
+    assert len(router.calls) + len(a.engine.backend.calls) == calls_after_first + 1  # only the summary call
+    assert a.ask("How many loans are in debt?", source=src.name, evidence="x").status == "ok"  # evidence: not cached path
+
+
+def test_verified_cache_entry_is_dropped_when_it_stops_working(make_agent, src):
+    a = make_agent(agent_fake({"in debt": route("analytics")}), {"in debt": DEBT_SQL})
+    key = a._verified_key(src, DEBT_Q)
+    a.verified.put(key, "SELECT loan_id FROM loan WHERE status = 'Z'")  # now returns no rows -> refused
+    r = a.ask(DEBT_Q, source=src.name)
+    assert r.status == "ok" and "verified_query_cache_stale" in r.warnings and a.verified.get(key) == src.validate(DEBT_SQL).sql
+
+
+def test_llm_calls_and_stage_spans_recorded(make_agent, src):
+    a = make_agent(agent_fake({"in debt": route("analytics")}, summary="ok"), {"in debt": DEBT_SQL})
+    r = a.ask(DEBT_Q, source=src.name)
+    assert [c["stage"] for c in r.llm_calls] == ["router", "mercer_sql", "summary"]
+    assert all(c["prompt_chars"] > 0 for c in r.llm_calls)
+    assert {"validation", "db_execute", "explain", "llm"} <= set(r.timings_ms)

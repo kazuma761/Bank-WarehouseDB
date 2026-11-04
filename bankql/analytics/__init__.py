@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextvars
+import re
 import hashlib
 import time
 from dataclasses import dataclass, field
@@ -48,26 +50,84 @@ def run_sync(coro):
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    with concurrent.futures.ThreadPoolExecutor(1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:  # carry the request's perf context into the thread
+        return pool.submit(contextvars.copy_context().run, asyncio.run, coro).result()
 
 
 # ------------------------------------------------------------------------------------------- adapters
 
+_THINK = re.compile(r"<think>.*?</think>|^.*?</think>", re.S)  # reasoning models (Arctic-Text2SQL-R1) think first
+_SQL_FENCE = re.compile(r"```(?:sql)?\s*(.*?)```", re.S | re.I)
+
+
+def final_answer(text: str) -> str:
+    """Drop <think>…</think> reasoning; if a fenced block remains, keep the last one (the answer)."""
+    t = _THINK.sub("", text or "").strip()
+    blocks = _SQL_FENCE.findall(t)
+    return blocks[-1].strip() if blocks else t
+
+
 class DialectBackend:
     """Wraps a Mercer LLMBackend: Mercer's prompts never name the SQL dialect, so append it (plus quoting of the
-    reserved table "order") to every system prompt. Mercer's prompt files stay untouched."""
+    reserved table "order") to every system prompt — a constant suffix, so the prompt prefix stays cacheable.
+    Also caps generated tokens and strips reasoning so Mercer sees only the final answer. Mercer files untouched."""
 
-    def __init__(self, inner, dialect: str):
-        self.inner = inner
+    def __init__(self, inner, dialect: str, max_tokens: int = 1024):
+        self.inner, self.cap = inner, max_tokens
         self.note = (f"\nTarget SQL dialect: {dialect}. Write SQL that runs on {dialect}. The table named order is a "
                      f"reserved word: always write it as {_QUOTE.get(dialect, chr(34) + 'order' + chr(34))}.")
 
     async def generate(self, prompt, system, temperature=0.0, max_tokens=1024, is_json=False):
-        return await self.inner.generate(prompt, system + self.note, temperature, max_tokens, is_json)
+        return final_answer(await self.inner.generate(prompt, system + self.note, temperature, min(max_tokens, self.cap), is_json))
 
     async def generate_batch(self, prompts, system, temperature=0.0, max_tokens=1024, is_json=False):
-        return await self.inner.generate_batch(prompts, system + self.note, temperature, max_tokens, is_json)
+        out = await self.inner.generate_batch(prompts, system + self.note, temperature, min(max_tokens, self.cap), is_json)
+        return [final_answer(o) for o in out]
+
+
+def instrumented_llamacpp_backend(base_url: str, api_key: str | None = None):
+    """Mercer's LlamaCppBackend with cache_prompt on and per-call token/prefill/decode stats recorded
+    (Mercer's _call returns only text). Same retry policy as Mercer's."""
+    from tenacity import retry, stop_after_attempt, wait_exponential
+
+    from bankql import perf
+    from bankql.analytics.mercer.inference.llamacpp_backend import LlamaCppBackend
+    from bankql.llm import mercer_stage
+
+    class InstrumentedLlamaCppBackend(LlamaCppBackend):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8), reraise=True)
+        async def _call(self, prompt, system, temperature, max_tokens, is_json):
+            payload = {"model": "local", "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                       "temperature": temperature, "max_tokens": max_tokens, "cache_prompt": True}
+            if is_json:
+                payload["response_format"] = {"type": "json_object"}
+            t0 = time.perf_counter()
+            resp = await self._client.post(f"{self._base_url}/v1/chat/completions", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            perf.llm_call(mercer_stage(system), (time.perf_counter() - t0) * 1000, data, prompt_chars=len(system) + len(prompt))
+            return str(data["choices"][0]["message"]["content"])
+
+    b = InstrumentedLlamaCppBackend(base_url=base_url)
+    if api_key:  # Mercer's backend has no auth option; its httpx client takes default headers
+        b._client.headers["Authorization"] = f"Bearer {api_key}"
+    return b
+
+
+def _timed_explain():
+    """Record Mercer's EXPLAIN pre-flight as its own span (wraps the function Mercer's executor imported)."""
+    from bankql import perf
+    import bankql.analytics.mercer.core.executor as ex
+
+    if getattr(ex.run_explain, "_bankql_timed", False):
+        return
+    inner = ex.run_explain
+
+    async def run_explain(sql, engine, dialect=None):
+        with perf.span("explain"):
+            return await inner(sql, engine, dialect)
+    run_explain._bankql_timed = True
+    ex.run_explain = run_explain
 
 
 class GuardedSandbox(ReadOnlySandbox):
@@ -100,13 +160,19 @@ class GuardedSandbox(ReadOnlySandbox):
 # ------------------------------------------------------------------------------------------- engine
 
 class MercerEngine:
-    def __init__(self, backend, *, mode: str = "fast", work_dir: str | Path = "data/mercer", schema_cache=None):
+    def __init__(self, backend, *, mode: str = "fast", work_dir: str | Path = "data/mercer", schema_cache=None,
+                 link_schema: str = "auto", max_tokens: int = 1024, full_schema_max_tables: int = 12):
         if mode not in ("fast", "full"):
             raise ValueError("mode must be fast or full")
+        _timed_explain()
         self.backend, self.mode = backend, mode
+        # link_schema: "always" = Mercer's 2 linking LLM calls; "never" = full schema; "auto" = full schema when the
+        # source has <= full_schema_max_tables tables (constant, cacheable prompt prefix; 2 fewer LLM calls)
+        self.link_schema, self.max_tokens, self.full_schema_max_tables = link_schema, max_tokens, full_schema_max_tables
         self.work_dir = Path(work_dir)
         self.schema_cache = schema_cache  # Mercer SchemaCache (Redis); optional
         self._schemas: dict[str, AnnotatedSchema] = {}
+        self._cache: dict = {}
 
     # --- schema: our allowlisted catalog + semantic joins as FKs + Mercer's value sampling + Mercer's mapper
     def schema_for(self, source: Source) -> AnnotatedSchema:
@@ -161,6 +227,31 @@ class MercerEngine:
                 pass
         return schema
 
+    def _full_schema(self, schema) -> bool:
+        return self.link_schema == "never" or (self.link_schema == "auto" and len(schema.tables) <= self.full_schema_max_tables)
+
+
+    def _full_filtered(self, source, schema):
+        """All tables + every FK join path, built once per source: the identical text starts every SQL prompt."""
+        from bankql.analytics.mercer.core.models import FilteredSchema
+        from bankql.analytics.mercer.schema.graph_builder import FKGraphBuilder
+
+        key = ("full", source.name)
+        if key not in self._cache:
+            self._cache[key] = FilteredSchema(tables=list(schema.tables),
+                                              join_paths=FKGraphBuilder(schema).find_all_paths([t.name for t in schema.tables]))
+        return self._cache[key]
+
+
+    def _retriever(self, source, schema):
+        """Mercer's EntityRetriever builds BM25 + LSH indexes on construction: build once per source, not per question."""
+        from bankql.analytics.mercer.core.entity_retriever import EntityRetriever
+
+        key = ("retriever", source.name)
+        if key not in self._cache:
+            self._cache[key] = EntityRetriever(schema=schema, glossary=schema.glossary)
+        return self._cache[key]
+
     # --- generation
     def generate(self, question: str, *, source: Source, evidence: str | None = None,
                  feedback: str | None = None) -> AnalyticsResult:
@@ -182,12 +273,16 @@ class MercerEngine:
         from bankql.analytics.mercer.prompts.sql_generation import SYSTEM_PROMPT, build_prompt_direct_cot
         from bankql.analytics.mercer.schema.graph_builder import FKGraphBuilder
 
-        backend, sandbox, timings = DialectBackend(self.backend, source.dialect), GuardedSandbox(source), {}
+        backend = DialectBackend(self.backend, source.dialect, self.max_tokens)
+        sandbox, timings = GuardedSandbox(source), {}
         t = time.perf_counter()
-        ectx = EntityRetriever(schema=schema, glossary=schema.glossary).retrieve(question)
+        ectx = self._retriever(source, schema).retrieve(question)
         timings["entity_retrieval"] = _ms(t)
         t = time.perf_counter()
-        filtered = await CHESSSchemaLinker(llm_backend=backend, fk_graph=FKGraphBuilder(schema)).link(question, ectx, schema)
+        if self._full_schema(schema):
+            filtered = self._full_filtered(source, schema)
+        else:
+            filtered = await CHESSSchemaLinker(llm_backend=backend, fk_graph=FKGraphBuilder(schema)).link(question, ectx, schema)
         timings["schema_linking"] = _ms(t)
         t = time.perf_counter()
         raw = await backend.generate(build_prompt_direct_cot(ectx.expanded_question or question, filtered, _FALLBACK_PLAN),
@@ -214,7 +309,7 @@ class MercerEngine:
         from bankql.analytics.mercer.core.pipeline import MercerPipeline
 
         sandbox = GuardedSandbox(source)
-        pipe = MercerPipeline(source.engine, backend=DialectBackend(self.backend, source.dialect),
+        pipe = MercerPipeline(source.engine, backend=DialectBackend(self.backend, source.dialect, self.max_tokens),
                               annotated_schema=schema, sandbox=sandbox, cache=_NoCache())
         state = await pipe.run(question)
         res = _result("full", state.candidates, state.filtered_schema, dict(state.stage_timings))
@@ -252,11 +347,7 @@ def _result(mode, candidates, filtered, timings) -> AnalyticsResult:
 def build_engine(cfg, backend=None) -> MercerEngine:
     """Default engine from config: Mercer's own llama.cpp backend on the SQL endpoint (Arctic)."""
     if backend is None:
-        from bankql.analytics.mercer.inference.llamacpp_backend import LlamaCppBackend
-
-        backend = LlamaCppBackend(base_url=cfg.sql.url().removesuffix("/v1"))
-        if cfg.sql.api_key():  # Mercer's backend has no auth option; its httpx client takes default headers
-            backend._client.headers["Authorization"] = f"Bearer {cfg.sql.api_key()}"
+        backend = instrumented_llamacpp_backend(cfg.sql.url().removesuffix("/v1"), cfg.sql.api_key())
     cache = None
     try:
         from bankql.analytics.mercer.schema.cache import SchemaCache
@@ -264,4 +355,5 @@ def build_engine(cfg, backend=None) -> MercerEngine:
         cache = SchemaCache(redis_url=cfg.sql.redis(), ttl_seconds=3600)
     except Exception:  # noqa: BLE001 — Redis optional at construction; failures surface on first use
         cache = None
-    return MercerEngine(backend, mode=cfg.sql.mode, work_dir=cfg.path("data/mercer"), schema_cache=cache)
+    return MercerEngine(backend, mode=cfg.sql.mode, work_dir=cfg.path("data/mercer"), schema_cache=cache,
+                        link_schema=cfg.sql.link_schema, max_tokens=cfg.sql.max_tokens)

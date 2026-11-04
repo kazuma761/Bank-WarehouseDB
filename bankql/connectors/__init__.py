@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.pool import QueuePool
 
+from bankql import perf
 from bankql.guardrails import Catalog, SqlasGuard, SqlValidator, TableMeta, Validation, bucket_small_counts
 from bankql.semantic import SemanticModel
 
@@ -222,7 +223,8 @@ class Source:
     # ----------------------------------------------------------------------------------- execution
 
     def validate(self, sql: str, *, allow_pii_output: bool = False) -> Validation:
-        return self.validator.validate(sql, allow_pii_output=allow_pii_output)
+        with perf.span("validation"):
+            return self.validator.validate(sql, allow_pii_output=allow_pii_output)
 
     def _checked(self, sql: str, allow_pii_output: bool) -> Validation:
         v = self.validate(sql, allow_pii_output=allow_pii_output)
@@ -235,7 +237,7 @@ class Source:
         v = self._checked(sql, allow_pii_output)
         cap = min(max_rows or self.cfg.row_cap, self.cfg.row_cap)
         t0 = time.perf_counter()
-        with self._execution(v.sql, params or {}) as result:
+        with perf.span("db_execute"), self._execution(v.sql, params or {}) as result:
             cols = list(result.keys())
             rows = [list(r) for r in result.fetchmany(cap + 1)]
         truncated = len(rows) > cap
@@ -248,7 +250,7 @@ class Source:
         """Yield (columns, rows) batches of the full result (up to row_cap) for exports."""
         v = self._checked(sql, allow_pii_output)
         sent = 0
-        with self._execution(v.sql, params or {}) as result:
+        with perf.span("db_execute"), self._execution(v.sql, params or {}) as result:
             cols = list(result.keys())
             while sent < self.cfg.row_cap:
                 rows = result.fetchmany(min(batch, self.cfg.row_cap - sent))

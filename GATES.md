@@ -69,3 +69,65 @@ Scope: Steps 1–9 from the owner's 2026-11-04 instruction — skeleton, pinned 
 
 ABANDON: G6 Blocked by the session network policy: DuckDB's sqlite_scanner/postgres_scanner extensions download from extensions.duckdb.org (denied). Handoff: owner allows that host, approves the third-party PyPI extension wheels, or approves a copy-into-DuckDB fallback (PROGRESS.md "Blockers" #1).
 ABANDON: G12 The only non-real_llm skip is the G6 federation test (same blocker); everything else passes. Handoff: resolves with G6.
+
+## Round 2 (2026-11-04 instruction: E, F, B, D, C + Docker/SQLAS/DuckDB/Gemma decisions)
+
+- [ ] G14: The local bankql branch is pushed: origin/bankql on kazuma761/Bank-WarehouseDB equals local HEAD
+  CHECK: .venv/bin/python scripts/gate.py pushed
+  EXPECT: GATE pushed OK
+  EVIDENCE: pending
+
+- [ ] G15: /demo works in a real browser through /v1/ask with session_id: three questions incl. a follow-up render cards with route, SQL, table and per-stage latency, no console errors
+  CHECK: .venv/bin/python scripts/gate.py demo
+  EXPECT: GATE demo OK
+  EVIDENCE: pending
+
+- [ ] G16: scripts/demo.sh parses, and demo.sh / demo.ps1 / compose bind llama-server, Redis and the API to 127.0.0.1 with keys/passwords
+  CHECK: .venv/bin/python scripts/gate.py demo_scripts
+  EXPECT: GATE demo_scripts OK
+  EVIDENCE: pending
+
+- [ ] G17: docs/CONNECT.md covers app→BankQL (schema incl. user_id, errors, timeouts, exports, curl/Python/JS/Java), six DB templates with read-only-user SQL, large tables, and every environment variable the code reads
+  CHECK: .venv/bin/python scripts/gate.py connect_doc
+  EXPECT: GATE connect_doc OK
+  EVIDENCE: pending
+
+- [ ] G18: bankql check-source passes on SQLite/DuckDB/Postgres, fails on the writable admin role without attempting a write, and init-source writes a loadable skeleton
+  CHECK: .venv/bin/python scripts/gate.py cli
+  EXPECT: GATE cli OK
+  EVIDENCE: pending
+
+- [ ] G19: eval/chat_smoke.py runs at least 30 conversations through /v1/ask (FakeLLM) and every turn's outcome matches its fixture expectation, with route, SQL, rows and refusals logged per turn
+  CHECK: .venv/bin/python scripts/gate.py chat_smoke
+  EXPECT: GATE chat_smoke OK
+  EVIDENCE: pending
+
+- [ ] G20: The adversarial suite tests/security passes with no skips and docs/SECURITY.md reports its results and residual risks
+  CHECK: .venv/bin/python scripts/gate.py security
+  EXPECT: GATE security OK
+  EVIDENCE: pending
+
+- [ ] G21: Latency report measured before vs after (FakeLLM): per-stage p50/p95, LLM calls and prompt size per question, cProfile shares of LLM / our Python / DB, and the optimisations' effect
+  CHECK: .venv/bin/python scripts/gate.py latency
+  EXPECT: GATE latency OK
+  EVIDENCE: pending
+
+- [ ] G22: Docker image builds from the ECR base image (REGISTRY build ARG)
+  CHECK: .venv/bin/python scripts/gate.py docker
+  EXPECT: GATE docker OK
+  EVIDENCE: pending
+
+- [ ] G23: DuckDB is pinned to an exact version in pyproject.toml and PROGRESS.md "Later" notes shipping extension files for offline installs; Gemma GGUF is configured
+  CHECK: .venv/bin/python scripts/gate.py pins2
+  EXPECT: GATE pins2 OK
+  EVIDENCE: pending
+
+- [ ] G24: Full suite green; the only skip is the federation test reporting the DuckDB-extension blocker
+  CHECK: .venv/bin/python scripts/gate.py all2
+  EXPECT: GATE all2 OK
+  EVIDENCE: pending
+
+- [ ] G25: A (real BIRD data): bird_financial loaded in SQLite/DuckDB/Postgres and the suite re-run against it
+  CHECK: .venv/bin/python scripts/gate.py bird
+  EXPECT: GATE bird OK
+  EVIDENCE: pending

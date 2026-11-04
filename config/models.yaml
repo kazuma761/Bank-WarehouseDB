@@ -22,6 +22,8 @@ sql:                          # Arctic-Text2SQL-R1-7B: analytics SQL via the Mer
   hf_file: Arctic-Text2SQL-R1-7B.i1-IQ4_XS.gguf
   timeout_s: 600
   mode: fast                  # fast (1 candidate @ T=0, no decomposition) | full (Mercer's 6 stages)
+  link_schema: auto           # auto: full schema (no 2 linking calls) when <= 12 tables -> constant prompt prefix
+  max_tokens: 768             # cap on Arctic output per call (it reasons in <think> first; raise if SQL gets cut)
   redis_url: redis://localhost:6379/0
   redis_url_env: BANKQL_REDIS_URL
 
@@ -41,3 +43,5 @@ agent:
   audit_path: data/audit.duckdb   # 0600; PII masked before writing
   audit_retention_days: 90
   export_ttl_hours: 24            # exports are bound to the creating API key and deleted after this
+  verified_cache: true            # repeat analytics questions skip router + SQL generation (SQL re-validated, re-run)
+  verified_cache_path: data/verified_queries.json

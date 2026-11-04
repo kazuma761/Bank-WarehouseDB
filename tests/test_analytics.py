@@ -19,7 +19,7 @@ def test_fast_mode_one_candidate_no_decomposition(src, engine_for):
     r = engine_for(fake).generate(Q, source=src)
     assert r.ok and r.mode == "fast" and len(r.candidates) == 1 and r.candidates[0]["strategy"] == "direct_cot"
     assert src.run(r.sql).rows == src.run(GOLD).rows
-    assert stages(fake) == ["tables", "columns", "sql"]  # no 'plan' stage
+    assert stages(fake) == ["sql"]  # small schema: full schema, no linking calls, no 'plan' stage
     assert all(c["temperature"] == 0.0 for c in fake.calls if "expert SQL engineer" in c["messages"][0]["content"])
     assert set(r.stage_timings_ms) >= {"entity_retrieval", "schema_linking", "candidate_generation", "execution_scoring"}
 
@@ -89,3 +89,30 @@ async def test_redis_schema_cache_roundtrip(sqlite_src, tmp_path):
     first = await eng._load_schema(sqlite_src)
     again = await eng._load_schema(sqlite_src)
     assert again.model_dump() == first.model_dump()
+
+
+def test_link_schema_always_restores_mercer_linking(src, tmp_path):
+    fake = mercer_fake({Q: GOLD})
+    r = MercerEngine(fake, work_dir=tmp_path, link_schema="always").generate(Q, source=src)
+    assert r.ok and stages(fake) == ["tables", "columns", "sql"]
+
+
+def test_full_schema_prompt_prefix_is_identical_across_questions(src, tmp_path):
+    fake = mercer_fake({"debt": GOLD, "women": "SELECT COUNT(*) FROM client WHERE gender = 'F'"})
+    eng = MercerEngine(fake, work_dir=tmp_path)
+    eng.generate("How many loans are in debt?", source=src)
+    eng.generate("How many clients are women?", source=src)
+    a, b = [c["messages"] for c in fake.calls if "expert SQL engineer" in c["messages"][0]["content"]]
+    assert a[0]["content"] == b[0]["content"]  # system prompt
+    qa, qb = a[1]["content"], b[1]["content"]
+    common = next(i for i, (x, y) in enumerate(zip(qa, qb)) if x != y)
+    assert qa[:common].endswith("--- QUESTION ---\n") or "--- QUESTION ---" in qa[:common]  # everything before the question is shared
+
+
+def test_reasoning_is_stripped_and_last_sql_block_kept():
+    from bankql.analytics import final_answer
+
+    out = "<think>Let me look at loan.status... maybe SELECT 1?</think>\n```sql\nSELECT COUNT(*) FROM loan WHERE status = 'D'\n```"
+    assert final_answer(out) == "SELECT COUNT(*) FROM loan WHERE status = 'D'"
+    assert final_answer("SELECT 1") == "SELECT 1"
+    assert final_answer("reasoning without open tag</think>SELECT 2") == "SELECT 2"

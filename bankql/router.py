@@ -111,7 +111,8 @@ class Router:
 
     def route(self, question: str) -> RouterDecision:
         r = self.llm.chat([{"role": "system", "content": ROUTER_SYSTEM}, {"role": "user", "content": question}],
-                          temperature=0.0, max_tokens=400, json_schema=ROUTER_SCHEMA, logprobs=self.use_logprobs)
+                          temperature=0.0, max_tokens=400, json_schema=ROUTER_SCHEMA, logprobs=self.use_logprobs,
+                          stage="router")
         try:
             data = json.loads(r.text)
             intent = data["intent"]
@@ -148,7 +149,7 @@ class Router:
         convo = "\n".join(f"{'User' if h['role'] == 'user' else 'Assistant'}: {h['content']}" for h in history)
         r = self.llm.chat([{"role": "system", "content": REWRITE_SYSTEM},
                            {"role": "user", "content": f"Conversation:\n{convo}\n\nLatest message: {question}"}],
-                          temperature=0.0, max_tokens=300, json_schema=REWRITE_SCHEMA)
+                          temperature=0.0, max_tokens=300, json_schema=REWRITE_SCHEMA, stage="rewrite")
         try:
             data = json.loads(r.text)
             out = str(data["standalone_question"]).strip()
@@ -162,7 +163,7 @@ class Router:
     def summarize(self, question: str, columns: list[str], rows: list[list], row_count: int) -> str | None:
         payload = json.dumps({"question": question, "row_count": row_count, "columns": columns, "rows": rows}, default=str)
         r = self.llm.chat([{"role": "system", "content": SUMMARY_SYSTEM}, {"role": "user", "content": payload}],
-                          temperature=0.0, max_tokens=200, json_schema=SUMMARY_SCHEMA)
+                          temperature=0.0, max_tokens=200, json_schema=SUMMARY_SCHEMA, stage="summary")
         try:
             return str(json.loads(r.text)["summary"]).strip() or None
         except (ValueError, KeyError, TypeError):

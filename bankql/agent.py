@@ -8,6 +8,7 @@ Every question is written to the DuckDB audit log.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import threading
 import time
@@ -27,7 +28,9 @@ from bankql.connectors.federation import build_federations
 from bankql.export import Exporter
 from bankql.guardrails import SqlasGuard, looks_like_injection, unmasked_contact
 from bankql.llm import LLMClient, OpenAICompatClient
+from bankql import perf
 from bankql.privacy import Scrubber
+from bankql.verified import VerifiedQueries
 from bankql.resolver import Resolver
 from bankql.router import Router, ToolCall, resolve_period, ungrounded_numbers
 from bankql.tools import LookupTools, ToolError, ToolResult
@@ -69,7 +72,12 @@ class AskResult(BaseModel):
     choices: list[dict] = Field(default_factory=list)
     refusal_reason: str | None = None
     timings_ms: dict[str, float] = Field(default_factory=dict)
+    llm_calls: list[dict] = Field(default_factory=list)  # per call: stage, tokens, cached tokens, prefill/decode ms
     warnings: list[str] = Field(default_factory=list)
+
+
+class _Done(Exception):
+    """Answered from the verified-query cache."""
 
 
 class _Refuse(Exception):
@@ -96,7 +104,8 @@ class Sessions:
 
 class Agent:
     def __init__(self, cfg: AppConfig, *, router_llm: LLMClient | None = None, engine=None,
-                 sources: dict[str, Source] | None = None, audit: AuditLog | None = None, exporter: Exporter | None = None):
+                 sources: dict[str, Source] | None = None, audit: AuditLog | None = None, exporter: Exporter | None = None,
+                 verified: VerifiedQueries | None = None):
         self.cfg = cfg
         self.guard = SqlasGuard()
         self.sources = sources or build_sources(cfg, self.guard)
@@ -116,6 +125,8 @@ class Agent:
         self._resolvers: dict[str, Resolver] = {}
         self._scrubbers: dict[str, Scrubber] = {}
         self.limiter = RateLimiter()
+        self.verified = verified if verified is not None else (
+            VerifiedQueries(cfg.path(cfg.agent.verified_cache_path)) if cfg.agent.verified_cache else None)
 
     @classmethod
     def from_config(cls, config_dir: str | Path = "config", **kw) -> "Agent":
@@ -148,6 +159,7 @@ class Agent:
             user_id: str | None = None, principal: Principal = LIBRARY,
             on_event: Callable[[str, dict], None] | None = None) -> AskResult:
         t0 = time.perf_counter()
+        rec, perf_token = perf.start()
         source = source or next(iter(self.cfg.sources))
         emit = on_event or (lambda stage, data: None)
         res = AskResult(request_id=uuid.uuid4().hex, session_id=session_id, source=source, question=question,
@@ -170,6 +182,23 @@ class Agent:
                     res.standalone_question, w = self.router.rewrite(question, hist)
                 res.warnings += w
                 emit("rewrite", {"standalone_question": res.standalone_question})
+            vkey = self._verified_key(src, res.standalone_question)
+            cached = self.verified.get(vkey) if vkey else None
+            if cached:  # skip router + SQL generation; the SQL is re-validated and re-run below
+                res.route, res.intent, res.confidence = "analytics", ["analytics"], 1.0
+                res.warnings.append("verified_query_cache_hit")
+                emit("router", {"intent": "analytics", "confidence": 1.0, "verified_cache": True})
+                try:
+                    self._execute_analytics(res, src, cached, timer, emit, principal.key_id)
+                except _Refuse:
+                    self.verified.forget(vkey)  # stale (data or schema changed): fall back to the full path
+                    res.warnings.append("verified_query_cache_stale")
+                    cached = None
+            if cached:
+                with timer("output_guardrail"):
+                    self._output_guard(res, src)
+                res.status = "ok"
+                raise _Done
             with timer("router"):
                 d = self.router.route(res.standalone_question)
             res.confidence, res.warnings = round(d.confidence, 4), res.warnings + d.warnings
@@ -192,6 +221,10 @@ class Agent:
             with timer("output_guardrail"):
                 self._output_guard(res, src)
             res.status = "ok"
+            if res.route == "analytics" and vkey and evidence is None:
+                self.verified.put(vkey, res.sql)
+        except _Done:
+            pass
         except (Forbidden, RateLimited) as e:  # re-raised after auditing: the API maps them to 403 / 429
             policy_exc = e
             res.refusal_reason = res.summary = str(e)
@@ -208,6 +241,9 @@ class Agent:
             res.route, res.status = "error", "error"
             res.refusal_reason = res.summary = f"Internal error; reference {res.request_id}."
             audit_extra.append(f"internal_error: {type(e).__name__}: {str(e)[:300]}")
+        perf.stop(perf_token)
+        res.timings_ms.update(rec.totals())
+        res.llm_calls = rec.llm
         res.timings_ms["total"] = round((time.perf_counter() - t0) * 1000, 1)
         emit("done", {"status": res.status})
         self.sessions.add(session_id, question, _history_text(res))
@@ -245,7 +281,27 @@ class Agent:
 
     # ------------------------------------------------------------------------------------------ lookup
 
+    def _verified_key(self, src: Source, question: str) -> str | None:
+        if self.verified is None:
+            return None
+        version = hashlib.sha256(src.semantic.model_dump_json().encode()).hexdigest()[:12]  # stable across restarts
+        return VerifiedQueries.key(src.name, version, question)
+
+    def warm(self) -> None:
+        """Pre-load catalogs, as_of dates and Mercer schemas (removes the ~1 s first-question cost)."""
+        for name, src in self.sources.items():
+            try:
+                src.catalog, src.as_of()
+                if hasattr(self.engine, "schema_for") and not hasattr(src, "members"):
+                    self.engine.schema_for(src)
+            except Exception:  # noqa: BLE001 — an unavailable source must not stop start-up
+                pass
+
     def _client_id(self, src: str, call: ToolCall) -> int:
+        with perf.span("resolver"):
+            return self._client_id_inner(src, call)
+
+    def _client_id_inner(self, src: str, call: ToolCall) -> int:
         r = self.resolver(src)
         if call.client_id is not None:
             res = r.client_by_id(call.client_id)
@@ -260,6 +316,10 @@ class Agent:
         return res.id
 
     def _account_id(self, src: str, call: ToolCall) -> int:
+        with perf.span("resolver"):
+            return self._account_id_inner(src, call)
+
+    def _account_id_inner(self, src: str, call: ToolCall) -> int:
         if call.account_id is not None:
             res = self.resolver(src).account_by_id(call.account_id)
             if res.status != "found":
@@ -319,30 +379,33 @@ class Agent:
             feedback = ar.error[:300]
         else:
             raise _Refuse(f"{NOT_SURE} — I couldn't produce a valid query after {attempts} attempts ({_public(feedback)}).")
-        res.sql = ar.sql
+        self._execute_analytics(res, src, ar.sql, timer, emit, owner)
+
+    def _execute_analytics(self, res: AskResult, src: Source, sql: str, timer, emit, owner: str) -> None:
+        res.sql = sql
         try:
             with timer("execute"):
-                exp = self.exporter.export(src, ar.sql, preview_rows=src.cfg.preview_rows, owner=owner)
+                exp = self.exporter.export(src, sql, preview_rows=src.cfg.preview_rows, owner=owner)
         except (QueryRejected, QueryTimeout) as e:
             raise _Refuse(f"{NOT_SURE} — the query could not be run safely ({e}).") from e
         rows = [[jsonable(v) for v in r] for r in exp.preview]
-        res.results = [ResultSet(name="analytics", sql=ar.sql, columns=exp.columns, rows=rows, row_count=exp.rows,
+        res.results = [ResultSet(name="analytics", sql=sql, columns=exp.columns, rows=rows, row_count=exp.rows,
                                  truncated=exp.truncated, export_id=exp.id,
-                                 legend=src.semantic.legend(exp.columns, src.validate(ar.sql).tables))]
+                                 legend=src.semantic.legend(exp.columns, src.validate(sql).tables))]
         res.columns, res.rows, res.row_count, res.export_id = exp.columns, rows, exp.rows, exp.id
         emit("execute", {"row_count": exp.rows})
         if exp.rows == 0:
             raise _Refuse(f"{NOT_SURE} — the query returned no rows, which may mean it misread the question. "
-                          f"SQL used: {ar.sql}")
-        used = set(src.validate(ar.sql).tables)
+                          f"SQL used: {sql}")
+        used = set(src.validate(sql).tables)
         if not used:  # e.g. a "correction" to SELECT 1: valid SQL that cannot answer a data question
             raise _Refuse(f"{NOT_SURE} — the generated query does not read any table, so it can't answer this. "
-                          f"SQL: {ar.sql}")
+                          f"SQL: {sql}")
         biggest = max((src.estimate_rows(m) for (q, n), m in src.catalog.tables.items()
                        if (f"{q}.{n}" if q else n) in used), default=0)
         if biggest and exp.rows > biggest:
             raise _Refuse(f"{NOT_SURE} — {exp.rows:,} rows is more than the largest table it reads (~{biggest:,}); "
-                          f"that usually means a bad join. SQL used: {ar.sql}")
+                          f"that usually means a bad join. SQL used: {sql}")
         with timer("summary"):
             res.summary = self._summary(res, src)
 

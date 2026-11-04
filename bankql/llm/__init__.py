@@ -13,6 +13,8 @@ from typing import Protocol
 
 import httpx
 
+from bankql import perf
+
 
 @dataclass
 class LLMResponse:
@@ -41,7 +43,9 @@ class OpenAICompatClient:
         self._http = httpx.Client(timeout=timeout_s, headers={"Authorization": f"Bearer {api_key}"} if api_key else None)
 
     def _payload(self, messages, temperature, max_tokens, json_schema, logprobs, mode) -> dict:
-        p = {"model": self.model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+        # cache_prompt: llama-server reuses the KV cache for an identical prompt prefix (our system prompts are constant)
+        p = {"model": self.model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens,
+             "cache_prompt": True}
         if logprobs:
             p.update(logprobs=True, top_logprobs=1)
         if json_schema is not None:
@@ -52,7 +56,8 @@ class OpenAICompatClient:
                                         "json_schema": {"name": "output", "strict": True, "schema": json_schema}}
         return p
 
-    def chat(self, messages, *, temperature=0.0, max_tokens=512, json_schema=None, logprobs=False) -> LLMResponse:
+    def chat(self, messages, *, temperature=0.0, max_tokens=512, json_schema=None, logprobs=False,
+             stage: str = "llm") -> LLMResponse:
         t0 = time.perf_counter()
         modes = [self.mode] if self.mode != "auto" or json_schema is None else ["response_format", "json_schema"]
         last: Exception | None = None
@@ -65,9 +70,12 @@ class OpenAICompatClient:
             r.raise_for_status()
             if json_schema is not None and self.mode == "auto":
                 self.mode = mode
-            choice = r.json()["choices"][0]
+            data = r.json()
+            choice = data["choices"][0]
             lp = (choice.get("logprobs") or {}).get("content")
-            return LLMResponse(choice["message"]["content"] or "", lp, round((time.perf_counter() - t0) * 1000, 1))
+            wall = (time.perf_counter() - t0) * 1000
+            perf.llm_call(stage, wall, data, prompt_chars=sum(len(str(m.get("content", ""))) for m in messages))
+            return LLMResponse(choice["message"]["content"] or "", lp, round(wall, 1))
         raise last or RuntimeError("no structured-output mode accepted")
 
     def health(self) -> bool:
@@ -125,8 +133,10 @@ class FakeLLM:
                 return reply(messages) if callable(reply) else reply
         return self.default
 
-    def chat(self, messages, *, temperature=0.0, max_tokens=512, json_schema=None, logprobs=False) -> LLMResponse:
+    def chat(self, messages, *, temperature=0.0, max_tokens=512, json_schema=None, logprobs=False,
+             stage: str = "llm") -> LLMResponse:
         out = self._reply(messages)
+        perf.llm_call(stage, 0.0, None, prompt_chars=sum(len(str(m.get("content", ""))) for m in messages))
         self.calls.append({"messages": messages, "json_schema": json_schema, "temperature": temperature, "reply": out})
         lp = [{"token": ch, "logprob": self.logprob} for ch in out] if logprobs and self.logprob is not None else None
         return LLMResponse(out, lp, 0.0)
@@ -134,11 +144,20 @@ class FakeLLM:
     async def generate(self, prompt: str, system: str, temperature: float = 0.0, max_tokens: int = 1024,
                        is_json: bool = False) -> str:
         return self.chat([{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-                         temperature=temperature, max_tokens=max_tokens).text
+                         temperature=temperature, max_tokens=max_tokens, stage=mercer_stage(system)).text
 
     async def generate_batch(self, prompts, system, temperature=0.0, max_tokens=1024, is_json=False) -> list[str]:
         temps = temperature if isinstance(temperature, list) else [temperature] * len(prompts)
         return list(await asyncio.gather(*(self.generate(p, system, t, max_tokens, is_json) for p, t in zip(prompts, temps))))
+
+
+def mercer_stage(system: str) -> str:
+    for key, name in (("select ONLY the tables", "mercer_tables"), ("minimum set of columns", "mercer_columns"),
+                      ("SQL planning expert", "mercer_plan"), ("expert SQL debugger", "mercer_correction"),
+                      ("expert SQL engineer", "mercer_sql")):
+        if key in system:
+            return name
+    return "mercer"
 
 
 def json_reply(obj) -> str:
