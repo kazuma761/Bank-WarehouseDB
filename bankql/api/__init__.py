@@ -86,8 +86,15 @@ def create_app(agent: Agent) -> FastAPI:
 
     @app.get("/v1/sources", dependencies=auth)
     def sources():
-        return [{"name": n, "dialect": s.dialect, "description": s.cfg.description, "as_of": str(s.as_of())}
-                for n, s in agent.sources.items()]
+        out = []
+        for n, s in agent.sources.items():
+            try:
+                as_of, available = str(s.as_of()), True
+            except Exception:  # noqa: BLE001 — e.g. its URL env var is not set
+                as_of, available = None, False
+            out.append({"name": n, "dialect": s.dialect, "description": s.cfg.description, "as_of": as_of,
+                        "available": available})
+        return out
 
     @app.get("/v1/sources/{source}/tables", dependencies=auth)
     def tables(source: str):

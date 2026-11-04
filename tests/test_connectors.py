@@ -1,5 +1,7 @@
 import sqlite3
 
+from tests.conftest import SOURCES
+
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -12,7 +14,7 @@ SLOW = "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n <
 def test_same_answers_on_every_dialect(sources):
     q = ('SELECT d.A3 AS region, COUNT(*) AS n FROM client c JOIN district d ON d.district_id = c.district_id '
          'GROUP BY d.A3 ORDER BY region')
-    results = {name: s.run(q).rows for name, s in sources.items()}
+    results = {name: sources[name].run(q).rows for name in SOURCES}
     assert len({repr(r) for r in results.values()}) == 1, results
 
 

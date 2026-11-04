@@ -201,6 +201,8 @@ class Source:
 
     def as_of(self) -> date:
         v = self.cfg.as_of
+        if v == "data" and not (self.cfg.as_of_table or self.cfg.large_tables):
+            v = "today"  # nothing to take the data date from
         if v == "today":
             return date.today()
         if v != "data":

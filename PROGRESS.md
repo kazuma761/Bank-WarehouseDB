@@ -15,7 +15,7 @@ directly with `.venv/bin/python scripts/gate.py <gate>`).
 | 5. Semantic YAML + Mercer mappings adapter | done — accepted by ported SemanticMapper on all 3 DBs |
 | 6. AnalyticsEngine + Mercer adapter (fast/full) on FakeLLM | done — validator inside Mercer executor; no torch/triton |
 | 7. Python lib, REST, MCP, OpenAI-compatible endpoint | done — e2e on FakeLLM; Docker image build untested (Docker Hub 429) |
-| 8. Resumable eval harness + metrics + SQLAS hooks | todo |
+| 8. Resumable eval harness + metrics + SQLAS hooks | done — BIRD EX = official calculate_ex on 9 edge cases |
 | 9. llama-cpp-python[server] builds from PyPI | done — 0.3.16, 1m31s, in `.venv-llama` |
 
 ## Log

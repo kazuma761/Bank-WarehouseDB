@@ -1,6 +1,7 @@
 import pytest
 
 from bankql.tools import LookupTools, ToolError, template_sql
+from tests.conftest import SOURCES
 
 
 @pytest.fixture
@@ -19,7 +20,7 @@ def _norm(rows):
 ])
 def test_tools_agree_across_dialects(sources, call):
     name, args = call
-    got = {s: _norm(getattr(LookupTools(src), name)(**args).rows) for s, src in sources.items()}
+    got = {s: _norm(getattr(LookupTools(sources[s]), name)(**args).rows) for s in SOURCES}
     assert len({repr(v) for v in got.values()}) == 1, got
 
 

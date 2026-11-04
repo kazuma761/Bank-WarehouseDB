@@ -33,6 +33,16 @@ sources:
     url_env: BANKQL_PG_URL             # postgresql+psycopg://bankql_ro:…@localhost:5432/bankql_fixture
     dialect: postgresql
 
+  bird_financial:
+    <<: *defaults
+    description: ORIGINAL BIRD mini-dev financial.sqlite — evaluation only (PROGRESS.md "Later" #1)
+    url_env: BANKQL_BIRD_URL           # sqlite:///data/bird/.../dev_databases/financial/financial.sqlite
+    dialect: sqlite
+    tables: [district, client, account, disp, card, loan, order, trans]   # BIRD has no client_profile
+    # No large-table guard for the benchmark: BIRD measures text-to-SQL accuracy and its gold queries scan
+    # trans freely. Production sources keep the guard.
+    large_tables: {}
+
 # Dev-mode federation: one DuckDB engine ATTACHes member sources; queries use member.table names.
 federations:
   fed_dev:

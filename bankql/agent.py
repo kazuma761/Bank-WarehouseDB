@@ -62,6 +62,7 @@ class AskResult(BaseModel):
     results: list[ResultSet] = Field(default_factory=list)
     summary: str = ""
     confidence: float | None = None
+    router: dict = Field(default_factory=dict)  # raw decision: intent, tools+args, self/logprob confidence
     choices: list[dict] = Field(default_factory=list)
     refusal_reason: str | None = None
     timings_ms: dict[str, float] = Field(default_factory=dict)
@@ -157,6 +158,8 @@ class Agent:
             with timer("router"):
                 d = self.router.route(res.standalone_question)
             res.confidence, res.warnings = round(d.confidence, 4), res.warnings + d.warnings
+            res.router = {"intent": d.intent, "tools": [{"tool": t.tool, "args": t.args()} for t in d.tools],
+                          "self_confidence": d.self_confidence, "logprob_confidence": d.logprob_confidence, "reason": d.reason}
             emit("router", {"intent": d.intent, "confidence": d.confidence, "tools": [t.tool for t in d.tools]})
             if d.intent == "unparseable" or d.confidence < self.cfg.router.confidence_threshold:
                 raise _Refuse(f"{NOT_SURE} what you're asking (router confidence {d.confidence:.2f}"
