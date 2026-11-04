@@ -1,0 +1,49 @@
+# Named, read-only data sources. URLs come from environment variables (see .env.example), never from here.
+# Until the real BIRD data arrives (PROGRESS.md "Later" #1) all three point at the synthetic fixture.
+#
+# large_tables: tables that need a time filter once a scan exceeds large_scan_threshold_rows (EXPLAIN
+# estimate). The fixture's trans has ~3.6k rows, so the threshold is fixture-scale; BIRD's trans has ~1M.
+
+defaults: &defaults
+  read_only: true
+  semantic: [semantic/financial.yaml]
+  tables: [district, client, account, disp, card, loan, order, trans, client_profile]
+  row_cap: 100000
+  preview_rows: 100
+  statement_timeout_s: 10
+  large_tables: {trans: {time_column: date}}
+  large_scan_threshold_rows: 1000
+  as_of: data            # relative periods ("last 3 months") count back from the latest trans.date
+  as_of_table: trans
+
+sources:
+  financial:
+    <<: *defaults
+    description: BIRD financial schema — SQLite (synthetic fixture for now)
+    url_env: BANKQL_FINANCIAL_URL      # sqlite:///data/fixture/financial.sqlite
+    dialect: sqlite
+  bank_demo:
+    <<: *defaults
+    description: BIRD financial + synthetic client_profile — DuckDB
+    url_env: BANKQL_DEMO_URL           # duckdb:///data/bank_demo.duckdb
+    dialect: duckdb
+  bank_pg:
+    <<: *defaults
+    description: BIRD financial copy — PostgreSQL 16, role bankql_ro
+    url_env: BANKQL_PG_URL             # postgresql+psycopg://bankql_ro:…@localhost:5432/bankql_fixture
+    dialect: postgresql
+
+# Dev-mode federation: one DuckDB engine ATTACHes member sources; queries use member.table names.
+federations:
+  fed_dev:
+    members: [financial, bank_pg]
+    row_cap: 100000
+    statement_timeout_s: 30
+    large_scan_threshold_rows: 1000
+
+# Production federation (Trino) — example only; see README "Federation". Needs `pip install trino[sqlalchemy]`.
+# trino_prod:
+#   url_env: BANKQL_TRINO_URL         # trino://bankql_ro@trino.internal:8443/postgres?http_scheme=https
+#   dialect: trino
+#   tables: [postgres.public.account, sqlite_files.main.trans]   # catalog.schema.table
+#   semantic: [semantic/financial.yaml]

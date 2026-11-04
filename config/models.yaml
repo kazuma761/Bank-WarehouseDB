@@ -1,0 +1,39 @@
+# Local models only, served by llama.cpp (llama-server, or llama-cpp-python's server) over the
+# OpenAI-compatible API. Every value can be overridden by the environment variable named in *_env.
+
+router:                       # Gemma 12B: router, follow-up rewriting, summaries
+  base_url: http://localhost:8080/v1
+  base_url_env: BANKQL_ROUTER_URL
+  model: gemma-router         # llama-server ignores the name; kept for logs
+  hf_repo: null               # <<FILL IN: owner-supplied Gemma 12B GGUF repo>>  (env BANKQL_ROUTER_HF_REPO)
+  hf_file: null               # <<FILL IN: GGUF filename>>                       (env BANKQL_ROUTER_HF_FILE)
+  timeout_s: 120
+  structured_output: auto     # auto | response_format | json_schema (llama-server top-level field)
+  logprobs: true              # use intent-token logprobs for confidence when the server returns them
+  confidence_threshold: 0.6   # STARTING VALUE ONLY — calibrate on the Phase 3 lookup eval
+
+sql:                          # Arctic-Text2SQL-R1-7B: analytics SQL via the Mercer pipeline
+  base_url: http://localhost:8081/v1
+  base_url_env: BANKQL_SQL_URL
+  model: arctic-text2sql
+  hf_repo: mradermacher/Arctic-Text2SQL-R1-7B-i1-GGUF
+  hf_file: Arctic-Text2SQL-R1-7B.i1-IQ4_XS.gguf
+  timeout_s: 600
+  mode: fast                  # fast (1 candidate @ T=0, no decomposition) | full (Mercer's 6 stages)
+  redis_url: redis://localhost:6379/0
+  redis_url_env: BANKQL_REDIS_URL
+
+serving:
+  cpu:                        # cloud session: ONE model at a time, 4 threads, 8k context
+    threads: 4
+    ctx: 8192
+  gpu:                        # RTX 4080 Super: both resident (see scripts/serve_local.*, Phase 6)
+    router: {port: 8080, ngl: 99, ctx: 8192}
+    sql: {port: 8081, ngl: 99, ctx: 24576, parallel: 3, cache_type_k: q8_0, cache_type_v: q8_0}
+
+agent:
+  session_turns: 6            # short follow-up history per session
+  max_validation_attempts: 2  # refuse after the SQL fails validation twice
+  summary_rows: 5             # rows the summary model may see
+  exports_dir: data/exports
+  audit_path: data/audit.duckdb

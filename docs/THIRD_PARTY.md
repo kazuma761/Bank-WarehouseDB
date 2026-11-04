@@ -81,6 +81,12 @@ Differences from SPEC.md:
    `dev/dev_databases/`) and an `llm_judge`; mini-dev ships
    `mini_dev_sqlite.json`. → We use SQLAS metric functions inside our own
    resumable runner rather than its benchmark runner.
+7. `read_only_compliance` accepts only `Select`/`With` roots, so every `UNION` / `EXCEPT` / `INTERSECT`
+   scores "not read-only" and `check_sql` blocks it. → We run `check_sql` on each SELECT branch.
+   `schema_compliance` also reports CTE names as unknown tables. → schema issues are warnings only.
+8. `check_output` does not block a single PII hit in result rows (score 1 − 0.1 = 0.9 ≥ its 0.85
+   threshold, though it fills `block_reason`). → Since we only pass PII-column cells and date-free text,
+   we block on any output issue.
 
 ## BIRD mini_dev — https://github.com/bird-bench/mini_dev
 

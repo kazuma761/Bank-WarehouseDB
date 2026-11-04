@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 dependencies = [
   "sqlglot",
-  "sqlalchemy",
+  "sqlalchemy[asyncio]",
   "duckdb",
   "duckdb-engine",
   "psycopg[binary]",
@@ -41,6 +41,7 @@ packages = ["bankql"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
   "postgres: needs the local PostgreSQL fixture (skipped when unreachable)",
   "real_llm: needs a running llama-server (skipped unless BANKQL_REAL_LLM=1)",

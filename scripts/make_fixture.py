@@ -1,7 +1,8 @@
 """Deterministic synthetic fixture with BIRD "financial"'s schema (Berka/PKDD'99 layout).
 
-Writes data/fixture/financial.sqlite (8 BIRD tables, like the original), data/bank_demo.duckdb
-(8 tables + synthetic client_profile) and loads the 8 tables into Postgres (BANKQL_PG_ADMIN_URL).
+Writes the 8 BIRD tables plus a synthetic client_profile to data/fixture/financial.sqlite,
+data/bank_demo.duckdb and Postgres (BANKQL_PG_ADMIN_URL). The fixture SQLite is NOT the BIRD original:
+when BIRD arrives, its SQLite stays untouched (no client_profile) for evaluation.
 All values are synthetic. Used by every test until the real BIRD data arrives.
 
     .venv/bin/python scripts/make_fixture.py            # build all three
@@ -47,6 +48,7 @@ DDL = [
 PROFILE_DDL = """CREATE TABLE client_profile (client_id INTEGER NOT NULL PRIMARY KEY REFERENCES client (client_id),
     full_name TEXT NOT NULL, city TEXT NOT NULL, phone_masked TEXT NOT NULL)"""
 TABLES = ["district", "client", "account", "disp", "card", "loan", "order", "trans"]  # FK-safe load order
+ALL_TABLES = TABLES + ["client_profile"]  # client_profile is synthetic; the real BIRD SQLite lacks it
 
 REGIONS = ["Prague", "central Bohemia", "south Bohemia", "west Bohemia", "north Bohemia",
            "east Bohemia", "south Moravia", "north Moravia"]
@@ -152,6 +154,11 @@ def generate() -> dict[str, list[tuple]]:
     return data
 
 
+def _ddl_8byte_floats(stmts: list[str]) -> list[str]:
+    """SQLite REAL is 8-byte; DuckDB/Postgres REAL is 4-byte. Use DOUBLE PRECISION there so values match BIRD."""
+    return [s.replace(" REAL ", " DOUBLE PRECISION ") for s in stmts]
+
+
 def _placeholders(n: int, style: str) -> str:
     return ", ".join(["?"] * n if style == "qmark" else ["%s"] * n)
 
@@ -161,9 +168,9 @@ def write_sqlite(data: dict[str, list[tuple]], path: Path = SQLITE_PATH) -> None
     path.unlink(missing_ok=True)
     con = sqlite3.connect(path)
     with con:
-        for stmt in DDL:
+        for stmt in DDL + [PROFILE_DDL]:
             con.execute(stmt)
-        for t in TABLES:
+        for t in ALL_TABLES:
             rows = [tuple(v.isoformat() if isinstance(v, date) else v for v in r) for r in data[t]]
             con.executemany(f'INSERT INTO "{t}" VALUES ({_placeholders(len(rows[0]), "qmark")})', rows)
     con.close()
@@ -175,9 +182,9 @@ def write_duckdb(data: dict[str, list[tuple]], path: Path = DUCKDB_PATH) -> None
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
     con = duckdb.connect(str(path))
-    for stmt in DDL + [PROFILE_DDL]:
+    for stmt in _ddl_8byte_floats(DDL + [PROFILE_DDL]):
         con.execute(stmt)
-    for t in TABLES + ["client_profile"]:
+    for t in ALL_TABLES:
         con.executemany(f'INSERT INTO "{t}" VALUES ({_placeholders(len(data[t][0]), "qmark")})', data[t])
     con.close()
 
@@ -186,11 +193,11 @@ def write_postgres(data: dict[str, list[tuple]], admin_url: str) -> None:
     import psycopg
 
     with psycopg.connect(admin_url) as con, con.cursor() as cur:
-        for t in reversed(TABLES):
+        for t in reversed(ALL_TABLES):
             cur.execute(f'DROP TABLE IF EXISTS "{t}" CASCADE')
-        for stmt in DDL:
+        for stmt in _ddl_8byte_floats(DDL + [PROFILE_DDL]):
             cur.execute(stmt)
-        for t in TABLES:
+        for t in ALL_TABLES:
             with cur.copy(f'COPY "{t}" FROM STDIN') as cp:
                 for r in data[t]:
                     cp.write_row(r)
@@ -213,12 +220,12 @@ def check_fixture() -> None:
     duck = duckdb.connect(str(DUCKDB_PATH), read_only=True)
     pg = psycopg.connect(_pg_dsn(os.environ["BANKQL_PG_URL"]))
     counts = {}
-    for t in TABLES:
+    for t in ALL_TABLES:
         q = f'SELECT COUNT(*) FROM "{t}"'
         c = (lite.execute(q).fetchone()[0], duck.execute(q).fetchone()[0], pg.execute(q).fetchone()[0])
         assert c[0] > 0 and len(set(c)) == 1, f"{t}: sqlite/duckdb/postgres counts differ {c}"
         counts[t] = c[0]
-    assert duck.execute("SELECT COUNT(*) FROM client_profile").fetchone()[0] == counts["client"]
+    assert counts["client_profile"] == counts["client"]
     cols = [r[1] for r in lite.execute("PRAGMA table_info(district)")]
     assert cols == ["district_id"] + [f"A{i}" for i in range(2, 17)], cols
     for con in (lite, duck, pg):
@@ -229,7 +236,7 @@ def check_fixture() -> None:
         raise AssertionError("bankql_ro could create a table")
     except psycopg.errors.ReadOnlySqlTransaction:
         pass
-    print("row counts match:", counts, "| total rows:", sum(counts.values()) + counts["client"])
+    print("row counts match:", counts, "| total rows:", sum(counts.values()))
 
 
 def main() -> None:
