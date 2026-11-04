@@ -56,3 +56,19 @@ def src(request, sources):
 @pytest.fixture
 def sqlite_src(sources):
     return sources["financial"]
+
+
+@pytest.fixture
+def make_agent(cfg, sources, tmp_path):
+    """Agent on the real fixture DBs with FakeLLM for both the router and Mercer."""
+    from bankql import Agent
+    from bankql.analytics import MercerEngine
+    from bankql.audit import AuditLog
+    from bankql.export import Exporter
+    from tests.fakes import mercer_fake
+
+    def make(router_llm, sql_answers=None, fix=None, mode="fast"):
+        eng = MercerEngine(mercer_fake(sql_answers or {}, fix=fix), mode=mode, work_dir=tmp_path / "m")
+        return Agent(cfg, router_llm=router_llm, engine=eng, sources=dict(sources),
+                     audit=AuditLog(tmp_path / "audit.duckdb"), exporter=Exporter(tmp_path / "exports"))
+    return make

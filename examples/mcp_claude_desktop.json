@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bankql": {
+      "command": "/path/to/bankql/.venv/bin/python",
+      "args": ["-m", "bankql.mcp_server", "--config", "/path/to/bankql/config"],
+      "cwd": "/path/to/bankql"
+    }
+  }
+}

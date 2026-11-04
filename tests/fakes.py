@@ -41,3 +41,31 @@ def stages(fake: FakeLLM) -> list[str]:
         else:
             names.append(re.sub(r"\s+", " ", sys)[:30])
     return names
+
+
+def route(intent="lookup", tools=(), confidence=0.95, reason="fake"):
+    full = [{"tool": t.pop("tool"), **{k: None for k in ("client_id", "account_id", "client_name", "city", "date_from",
+                                                          "date_to", "period")}, **t} for t in (dict(x) for x in tools)]
+    return json.dumps({"intent": intent, "tools": full, "confidence": confidence, "reason": reason})
+
+
+def agent_fake(routes: dict[str, str], *, rewrites: dict[str, str] | None = None, summary: str | None = None,
+               logprob: float | None = None) -> FakeLLM:
+    """Router-side FakeLLM: `routes` maps a question substring -> router JSON (see `route`)."""
+    def router(messages):
+        q = messages[-1]["content"].lower()
+        for k, v in routes.items():
+            if k.lower() in q:
+                return v
+        return route("unsupported", confidence=0.9, reason="no fake route")
+
+    def rewrite(messages):
+        latest = messages[-1]["content"].rsplit("Latest message:", 1)[-1].strip()
+        out = (rewrites or {}).get(latest)
+        return json.dumps({"is_follow_up": out is not None, "standalone_question": out or latest})
+
+    return FakeLLM(rules=[
+        (r"You route questions", router),
+        (r"Rewrite the user's latest message", rewrite),
+        (r"Answer the question in 1-2 plain sentences", json.dumps({"summary": summary or "Here are the results."})),
+    ], logprob=logprob)

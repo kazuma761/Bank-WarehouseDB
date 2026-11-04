@@ -1,0 +1,9 @@
+.venv/
+.venv-llama/
+.cache/
+data/
+models/
+third_party/
+.env
+**/__pycache__
+.git/

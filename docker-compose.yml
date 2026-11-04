@@ -1,0 +1,33 @@
+# API + Redis + Postgres. llama-server runs on the host:  scripts/serve_local.sh (Phase 6) or llama-server directly.
+# Secrets come from .env (see .env.example):  BANKQL_API_KEYS, BANKQL_PG_ADMIN_PASSWORD, BANKQL_PG_RO_PASSWORD.
+services:
+  api:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      BANKQL_API_KEYS: ${BANKQL_API_KEYS:?set BANKQL_API_KEYS in .env}
+      BANKQL_FINANCIAL_URL: sqlite:////app/data/fixture/financial.sqlite
+      BANKQL_DEMO_URL: duckdb:////app/data/bank_demo.duckdb
+      BANKQL_PG_URL: postgresql+psycopg://bankql_ro:${BANKQL_PG_RO_PASSWORD:?}@postgres:5432/bankql_fixture
+      BANKQL_PG_ADMIN_URL: postgresql+psycopg://bankql_admin:${BANKQL_PG_ADMIN_PASSWORD:?}@postgres:5432/bankql_fixture
+      BANKQL_ROUTER_URL: http://host.docker.internal:8080/v1
+      BANKQL_SQL_URL: http://host.docker.internal:8081/v1
+      BANKQL_REDIS_URL: redis://redis:6379/0
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["bankql-data:/app/data"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+  redis:
+    image: redis:7-alpine
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: ${BANKQL_PG_ADMIN_PASSWORD:?}
+      BANKQL_PG_ADMIN_PASSWORD: ${BANKQL_PG_ADMIN_PASSWORD:?}
+      BANKQL_PG_RO_PASSWORD: ${BANKQL_PG_RO_PASSWORD:?}
+    volumes: ["./scripts/pg_init.sh:/docker-entrypoint-initdb.d/10-bankql.sh:ro", "pg-data:/var/lib/postgresql/data"]
+    healthcheck: {test: ["CMD", "pg_isready", "-U", "postgres"], interval: 2s, retries: 30}
+volumes: {bankql-data: {}, pg-data: {}}
+# First run (builds the synthetic fixture into the volume + Postgres):
+#   docker compose up -d postgres redis && docker compose run --rm api python scripts/make_fixture.py && docker compose up -d api
