@@ -1,0 +1,6 @@
+[submodule "third_party/mercer"]
+	path = third_party/mercer
+	url = https://github.com/baselanaya/Mercer
+[submodule "third_party/bird_mini_dev"]
+	path = third_party/bird_mini_dev
+	url = https://github.com/bird-bench/mini_dev

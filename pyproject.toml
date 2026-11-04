@@ -1,0 +1,47 @@
+[project]
+name = "bankql"
+version = "0.1.0"
+description = "Local-LLM text-to-SQL agent for bank data (llama.cpp, read-only, guarded)"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+dependencies = [
+  "sqlglot",
+  "sqlalchemy",
+  "duckdb",
+  "duckdb-engine",
+  "psycopg[binary]",
+  "rapidfuzz",
+  "pyyaml",
+  "pydantic",
+  "httpx",
+  "fastapi",
+  "uvicorn",
+  "mcp",
+  "sqlas==2.8.0",
+  # Mercer (ported in bankql/analytics/mercer) runtime deps
+  "redis",
+  "rank-bm25",
+  "scikit-learn",
+  "numpy",
+  "networkx",
+  "structlog",
+  "tenacity",
+]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "fakeredis", "faker", "func-timeout"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["bankql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "postgres: needs the local PostgreSQL fixture (skipped when unreachable)",
+  "real_llm: needs a running llama-server (skipped unless BANKQL_REAL_LLM=1)",
+]

@@ -1,0 +1,19 @@
+.venv/
+.venv-llama/
+.cache/
+__pycache__/
+*.pyc
+.pytest_cache/
+/models/
+/data/*.sqlite
+/data/*.duckdb
+/data/*.duckdb.wal
+/data/exports/
+/data/bird/
+/data/fixture/
+/eval/results/*.jsonl
+.env
+# unlazy runtime state
+.unlazy/
+.unlazy-hook-state.json
+.claude/settings.local.json
