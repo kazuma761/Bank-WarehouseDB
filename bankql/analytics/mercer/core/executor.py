@@ -87,6 +87,18 @@ class CandidateExecutor:
                 )
                 return candidate.model_copy(update={"execution_result": result})
 
+            # bankql patch: validate BEFORE the EXPLAIN gate, so unvalidated LLM SQL never reaches the
+            # database (EXPLAIN of a multi-statement string would otherwise run on psycopg). EXPLAIN and
+            # execution then use the validated, re-rendered SQL.
+            prevalidate = getattr(self._sandbox, "prevalidate", None)
+            if prevalidate is not None:
+                ok, checked = prevalidate(candidate.sql)
+                if not ok:
+                    result = ExecutionResult(success=False, sql=candidate.sql, row_count=0, columns=[],
+                                             sample_rows=[], error_message=checked)
+                    return candidate.model_copy(update={"execution_result": result})
+                candidate = candidate.model_copy(update={"sql": checked})
+
             # EXPLAIN gate — soft pre-flight check. When EXPLAIN fails, we
             # mark the candidate as failed-with-explain-error and skip the
             # real execution. The downstream corrector still gets a useful

@@ -13,7 +13,7 @@ directly with `.venv/bin/python scripts/gate.py <gate>`).
 | 3. Synthetic fixture → SQLite / DuckDB / Postgres | done — 5,916 rows, counts match |
 | 4. Phase 2 core | done — 299 tests green; SQLite⋈Postgres federation blocked (DuckDB extensions) |
 | 5. Semantic YAML + Mercer mappings adapter | done — accepted by ported SemanticMapper on all 3 DBs |
-| 6. AnalyticsEngine + Mercer adapter (fast/full) on FakeLLM | todo |
+| 6. AnalyticsEngine + Mercer adapter (fast/full) on FakeLLM | done — validator inside Mercer executor; no torch/triton |
 | 7. Python lib, REST, MCP, OpenAI-compatible endpoint | todo |
 | 8. Resumable eval harness + metrics + SQLAS hooks | todo |
 | 9. llama-cpp-python[server] builds from PyPI | done — 0.3.16, 1m31s, in `.venv-llama` |

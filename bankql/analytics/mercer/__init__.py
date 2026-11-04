@@ -11,5 +11,7 @@ Patches (everything else is byte-identical apart from `from X` -> `from bankql.a
   2. kernels/*.py      — torch/triton imported only when BANKQL_MERCER_GPU_KERNELS=1; CPU fallbacks otherwise.
   3. core/pipeline.py  — `backend` is required (ModelRouter removed); accepts a prebuilt `annotated_schema`,
                           an injected `sandbox`, and an optional `audit_store`.
+  4. core/executor.py  — if the injected sandbox has `prevalidate(sql) -> (ok, sql_or_error)`, candidates are
+                          validated before the EXPLAIN gate and the validated SQL is what gets EXPLAINed/run.
 Verify with:  diff -r third_party/mercer/core bankql/analytics/mercer/core   (etc.)
 """
