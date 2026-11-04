@@ -70,3 +70,14 @@ def test_describe_and_allowlist(src):
 
 def test_as_of_is_latest_transaction(src):
     assert src.as_of().isoformat() == "1998-12-31"
+
+
+def test_concurrent_queries_more_threads_than_pool(src):
+    """Regression: SingletonThreadPool on the SQLite creator engine segfaulted under concurrent use."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def q(i):
+        return src.run(f"SELECT COUNT(*) FROM loan WHERE loan_id > {i % 7}").rows[0][0]
+    with ThreadPoolExecutor(24) as ex:
+        results = list(ex.map(q, range(300)))
+    assert results[0] == src.run("SELECT COUNT(*) FROM loan WHERE loan_id > 0").rows[0][0] and len(results) == 300

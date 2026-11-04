@@ -18,7 +18,7 @@ Running log. Acceptance gates live in `GATES.md` (checked with
 | 8. Resumable eval harness + metrics + SQLAS hooks | done — our BIRD EX = official `calculate_ex` on 9 edge cases |
 | 9. llama-cpp-python[server] builds from PyPI | done — 0.3.16, built in 1m31s, in `.venv-llama` |
 
-Test suite: **435 passed, 1 skipped** (`.venv/bin/python -m pytest`), against real SQLite, DuckDB and
+Test suite: **438 passed, 1 skipped** (10 consecutive clean runs after the pool fix) (`.venv/bin/python -m pytest`), against real SQLite, DuckDB and
 PostgreSQL 16 with `FakeLLM`. The skip is the federation blocker below. No real-model test has run yet.
 
 ## Blockers needing an owner decision
@@ -37,6 +37,10 @@ PostgreSQL 16 with `FakeLLM`. The skip is the federation blocker below. No real-
 
 ## Log
 
+- **Final verification** — found an intermittent segfault (1 in 6 full runs): the SQLite engine built with
+  `create_engine("sqlite://", creator=…)` got SQLAlchemy's `SingletonThreadPool`, whose cleanup closes
+  connections other threads still use (Mercer full mode EXPLAINs 3 candidates in parallel; the API thread pool
+  would hit it too). Fixed with an explicit `QueuePool` + a 24-thread regression test; 10 clean runs after.
 - **Step 8** — `bankql/eval/`: resumable `run_jsonl` (append + fsync per item, torn-line tolerant,
   errors retried, `--limit` chunks), BIRD-faithful set EX, multiset EX, SQLAS `execution_accuracy` +
   `classify_failure` (fed the shapes its source reads), lookup metrics (intent / args / rows / refusal /

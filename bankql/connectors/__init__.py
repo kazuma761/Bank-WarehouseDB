@@ -17,6 +17,7 @@ from functools import cached_property
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.pool import QueuePool
 
 from bankql.guardrails import Catalog, SqlasGuard, SqlValidator, TableMeta, Validation
 from bankql.semantic import SemanticModel
@@ -114,7 +115,9 @@ class Source:
                 con = sqlite3.connect(f"file:{os.path.abspath(path)}?mode=ro", uri=True, check_same_thread=False)
                 con.execute("PRAGMA query_only = ON")
                 return con
-            return create_engine("sqlite://", creator=creator, pool_pre_ping=False)
+            # QueuePool, explicitly: for a "sqlite://" URL SQLAlchemy picks SingletonThreadPool, whose cleanup closes
+            # connections other threads are still using (segfault under concurrent EXPLAIN / API threads).
+            return create_engine("sqlite://", creator=creator, poolclass=QueuePool, pool_size=5, max_overflow=10)
         if backend == "duckdb":
             return create_engine(url, connect_args={"read_only": True})
         if backend == "postgresql":

@@ -23,6 +23,7 @@ DB = str(ROOT / "data/fixture/financial.sqlite")
 
 @pytest.fixture(scope="module")
 def official_calculate_ex():
+    sys.dont_write_bytecode = True  # keep the pinned submodule checkout clean
     for m in ("psycopg2", "pymysql"):  # imported at module top by evaluation_utils, unused for SQLite
         sys.modules.setdefault(m, types.ModuleType(m))
     sys.path.insert(0, str(ROOT / "third_party/bird_mini_dev/evaluation"))
