@@ -10,7 +10,7 @@ Running log. Acceptance gates live in `GATES.md` (checked with
 
 | Item | State |
 |---|---|
-| Push to `kazuma761/Bank-WarehouseDB` branch `bankql` | **blocked** — git proxy 403: Claude GitHub App not installed for `kazuma761`; full history sent to the owner as `bankql.bundle` |
+| Push to `kazuma761/Bank-WarehouseDB` branch `bankql` | done — pushed after GitHub access was fixed |
 | E. `/demo` page + `scripts/demo.sh` / `.ps1` | done — browser-checked (3 cards, follow-up rewritten, no console errors) |
 | F. `docs/CONNECT.md` + `bankql check-source` / `init-source` / `hash-key` | done — check-source PASS on 3 DBs, FAIL on the writable admin role (inspected, no writes) |
 | B. `eval/chat_smoke.py` (31 conversations, 34 turns, `/v1/ask` only) | done on FakeLLM — 34/34 as expected; real-model run waits for models |
@@ -41,9 +41,7 @@ Test suite: **543 passed, 1 skipped** (the skip = DuckDB-extension federation bl
 
 ## Blockers needing the owner
 
-1. **GitHub push:** install the Claude GitHub App for `kazuma761` (https://claude.ai/connect-github). Until then:
-   `git clone -b bankql bankql.bundle bankql && cd bankql && git push -u https://github.com/kazuma761/Bank-WarehouseDB bankql`.
-2. **Network (session still denies):** `huggingface.co` (+ `cdn-lfs.huggingface.co`, `cas-bridge.xethub.hf.co`),
+1. **Network (session still denies):** `huggingface.co` (+ `cdn-lfs.huggingface.co`, `cas-bridge.xethub.hf.co`),
    `bird-bench.oss-cn-beijing.aliyuncs.com`, `extensions.duckdb.org`, and for Docker
    `d2glxqk2uabbnd.cloudfront.net` (ECR layer CDN). Allowed-domain changes apply to new sessions.
 

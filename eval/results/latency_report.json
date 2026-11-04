@@ -4,12 +4,12 @@
   "turns_per_rep": 34,
   "before": {
     "n": 68,
-    "first_question_ms": 217.9,
+    "first_question_ms": 258.5,
     "stages_ms": {
       "input_guardrail": {
         "p50": 0.1,
         "p95": 0.1,
-        "mean": 0.14,
+        "mean": 0.15,
         "n": 68
       },
       "rewrite": {
@@ -20,68 +20,68 @@
       },
       "router": {
         "p50": 0.1,
-        "p95": 0.1,
-        "mean": 0.09,
+        "p95": 0.2,
+        "mean": 0.1,
         "n": 68
       },
       "resolver": {
-        "p50": 2.17,
-        "p95": 9.69,
-        "mean": 8.35,
+        "p50": 2.48,
+        "p95": 11.15,
+        "mean": 9.63,
         "n": 34
       },
       "mercer_entity_retrieval": {
-        "p50": 6.3,
-        "p95": 58.1,
-        "mean": 15.15,
+        "p50": 6.7,
+        "p95": 45.4,
+        "mean": 13.9,
         "n": 26
       },
       "mercer_schema_linking": {
         "p50": 1.3,
-        "p95": 3.0,
-        "mean": 1.55,
+        "p95": 2.6,
+        "mean": 1.48,
         "n": 26
       },
       "mercer_candidate_generation": {
         "p50": 1.1,
-        "p95": 2.5,
-        "mean": 1.26,
+        "p95": 1.9,
+        "mean": 1.23,
         "n": 26
       },
       "validation": {
-        "p50": 0.08,
-        "p95": 5.74,
-        "mean": 4.85,
+        "p50": 0.07,
+        "p95": 9.48,
+        "mean": 5.76,
         "n": 57
       },
       "explain": {
-        "p50": 3.14,
-        "p95": 4.13,
-        "mean": 7.06,
+        "p50": 2.84,
+        "p95": 6.6,
+        "mean": 6.59,
         "n": 22
       },
       "db_execute": {
-        "p50": 5.58,
-        "p95": 8.31,
-        "mean": 5.85,
+        "p50": 6.03,
+        "p95": 10.28,
+        "mean": 6.49,
         "n": 53
       },
       "mercer_execution_scoring": {
-        "p50": 7.6,
-        "p95": 17.9,
-        "mean": 10.63,
+        "p50": 8.1,
+        "p95": 17.3,
+        "mean": 10.27,
         "n": 26
       },
       "mercer_correction": {
-        "p50": 6.1,
-        "p95": 6.4,
-        "mean": 5.22,
+        "p50": 4.3,
+        "p95": 4.9,
+        "mean": 4.12,
         "n": 4
       },
       "execute": {
-        "p50": 9.0,
-        "p95": 12.0,
-        "mean": 9.71,
+        "p50": 11.2,
+        "p95": 15.2,
+        "mean": 12.0,
         "n": 22
       },
       "summary": {
@@ -103,16 +103,16 @@
         "n": 68
       },
       "total": {
-        "p50": 9.7,
-        "p95": 73.0,
-        "mean": 38.63,
+        "p50": 14.0,
+        "p95": 61.8,
+        "mean": 39.07,
         "n": 68
       }
     },
     "share": {
       "llm_fake": 0.0,
-      "database": 0.177,
-      "bankql_python": 0.823
+      "database": 0.184,
+      "bankql_python": 0.816
     },
     "per_route": {
       "lookup": {
@@ -137,16 +137,16 @@
       }
     },
     "cache_hits": 0,
-    "wall_s": 3.5
+    "wall_s": 3.71
   },
   "after": {
     "n": 68,
-    "first_question_ms": 24.0,
+    "first_question_ms": 22.9,
     "stages_ms": {
       "input_guardrail": {
         "p50": 0.1,
         "p95": 0.1,
-        "mean": 0.09,
+        "mean": 0.1,
         "n": 68
       },
       "rewrite": {
@@ -158,79 +158,79 @@
       "router": {
         "p50": 0.1,
         "p95": 0.1,
-        "mean": 0.09,
+        "mean": 0.14,
         "n": 58
       },
       "resolver": {
-        "p50": 2.25,
-        "p95": 8.09,
-        "mean": 2.91,
+        "p50": 2.35,
+        "p95": 7.99,
+        "mean": 2.9,
         "n": 34
       },
       "mercer_entity_retrieval": {
-        "p50": 7.5,
-        "p95": 44.4,
-        "mean": 15.41,
+        "p50": 9.5,
+        "p95": 56.1,
+        "mean": 18.86,
         "n": 16
       },
       "mercer_schema_linking": {
         "p50": 0.0,
         "p95": 0.0,
-        "mean": 0.07,
+        "mean": 0.06,
         "n": 16
       },
       "mercer_candidate_generation": {
-        "p50": 1.3,
-        "p95": 2.3,
-        "mean": 1.47,
+        "p50": 1.7,
+        "p95": 2.5,
+        "mean": 1.69,
         "n": 16
       },
       "validation": {
         "p50": 0.04,
-        "p95": 7.83,
-        "mean": 1.7,
+        "p95": 5.37,
+        "mean": 1.64,
         "n": 57
       },
       "explain": {
-        "p50": 3.13,
-        "p95": 3.99,
-        "mean": 3.19,
+        "p50": 3.09,
+        "p95": 3.66,
+        "mean": 2.98,
         "n": 12
       },
       "db_execute": {
-        "p50": 5.21,
-        "p95": 8.91,
-        "mean": 5.32,
+        "p50": 5.3,
+        "p95": 9.07,
+        "mean": 5.6,
         "n": 53
       },
       "mercer_execution_scoring": {
         "p50": 9.1,
         "p95": 12.3,
-        "mean": 7.85,
+        "mean": 8.32,
         "n": 16
       },
       "mercer_correction": {
-        "p50": 4.2,
-        "p95": 4.3,
-        "mean": 4.02,
+        "p50": 5.8,
+        "p95": 5.9,
+        "mean": 5.28,
         "n": 4
       },
       "execute": {
-        "p50": 8.9,
-        "p95": 12.0,
-        "mean": 9.52,
+        "p50": 13.9,
+        "p95": 15.5,
+        "mean": 13.77,
         "n": 22
       },
       "summary": {
         "p50": 0.2,
         "p95": 0.2,
-        "mean": 0.15,
+        "mean": 0.17,
         "n": 20
       },
       "output_guardrail": {
         "p50": 0.1,
         "p95": 0.1,
-        "mean": 0.06,
+        "mean": 0.07,
         "n": 46
       },
       "llm": {
@@ -240,16 +240,16 @@
         "n": 68
       },
       "total": {
-        "p50": 9.2,
-        "p95": 42.3,
-        "mean": 13.93,
+        "p50": 9.9,
+        "p95": 56.6,
+        "mean": 16.45,
         "n": 68
       }
     },
     "share": {
       "llm_fake": 0.0,
-      "database": 0.338,
-      "bankql_python": 0.662
+      "database": 0.297,
+      "bankql_python": 0.703
     },
     "per_route": {
       "lookup": {
@@ -269,40 +269,40 @@
       },
       "analytics": {
         "llm_calls_per_question": 2.2,
-        "prompt_chars_per_question": 5997,
+        "prompt_chars_per_question": 5998,
         "n": 20
       }
     },
     "cache_hits": 10,
-    "wall_s": 1.75
+    "wall_s": 1.87
   },
   "profile_after": {
     "self_time_share": {
-      "other": 0.422,
-      "sqlglot": 0.193,
-      "sklearn/numpy/rapidfuzz": 0.129,
-      "bankql": 0.093,
-      "db_drivers": 0.092,
-      "sqlalchemy": 0.054,
+      "other": 0.461,
+      "sqlglot": 0.184,
+      "sklearn/numpy/rapidfuzz": 0.128,
+      "bankql": 0.084,
+      "db_drivers": 0.076,
+      "sqlalchemy": 0.048,
       "mercer_port": 0.016,
       "pydantic": 0.002
     },
     "top_tottime": [
-      "1407895 function calls (1382937 primitive calls) in 1.331 seconds",
-      "72    0.093    0.001    0.093    0.001 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/duckdb_engine/__init__.py:130(execute)",
-      "34    0.086    0.003    0.087    0.003 /home/user/bankql-repo/bankql/audit.py:40(write)",
-      "128    0.037    0.000    0.042    0.000 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:946(do_rollback)",
-      "173886    0.034    0.000    0.045    0.000 {built-in method builtins.isinstance}",
-      "4014    0.032    0.000    0.039    0.000 {built-in method _io.open}",
-      "119626    0.023    0.000    0.027    0.000 {method 'get' of 'dict' objects}",
-      "72    0.021    0.000    0.022    0.000 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/duckdb_engine/__init__.py:343(do_begin)",
-      "16062/232    0.017    0.000    0.060    0.000 /usr/lib/python3.12/copy.py:118(deepcopy)",
-      "5616    0.016    0.000    0.028    0.000 /usr/lib/python3.12/inspect.py:1795(_check_class)",
-      "42120    0.015    0.000    0.015    0.000 /usr/lib/python3.12/inspect.py:1813(_shadowed_dict)",
-      "1098    0.014    0.000    0.016    0.000 {method 'sub' of 're.Pattern' objects}",
-      "1366    0.013    0.000    0.013    0.000 {method 'search' of 're.Pattern' objects}",
-      "232    0.013    0.000    0.059    0.000 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/sqlglot/expressions/core.py:1005(__deepcopy__)",
-      "1296    0.013    0.000    0.184    0.000 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:733(check_array)"
+      "1473723 function calls (1448765 primitive calls) in 1.697 seconds",
+      "72    0.100    0.001    0.100    0.001 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/duckdb_engine/__init__.py:130(execute)",
+      "34    0.094    0.003    0.095    0.003 /home/user/bankql-repo/bankql/audit.py:40(write)",
+      "5510    0.054    0.000    0.065    0.000 {built-in method _io.open}",
+      "178374    0.043    0.000    0.054    0.000 {built-in method builtins.isinstance}",
+      "128    0.040    0.000    0.046    0.000 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/sqlalchemy/engine/default.py:946(do_rollback)",
+      "119626    0.031    0.000    0.035    0.000 {method 'get' of 'dict' objects}",
+      "42120    0.023    0.000    0.023    0.000 /usr/lib/python3.12/inspect.py:1813(_shadowed_dict)",
+      "16062/232    0.023    0.000    0.076    0.000 /usr/lib/python3.12/copy.py:118(deepcopy)",
+      "5616    0.022    0.000    0.041    0.000 /usr/lib/python3.12/inspect.py:1795(_check_class)",
+      "72    0.022    0.000    0.022    0.000 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/duckdb_engine/__init__.py:343(do_begin)",
+      "5489    0.020    0.000    0.079    0.000 /usr/lib/python3.12/pathlib.py:199(_select_from)",
+      "1366    0.019    0.000    0.019    0.000 {method 'search' of 're.Pattern' objects}",
+      "5478    0.018    0.000    0.024    0.000 {method 'read' of '_io.TextIOWrapper' objects}",
+      "1296    0.017    0.000    0.242    0.000 /home/user/bankql-repo/.venv/lib/python3.12/site-packages/sklearn/utils/validation.py:733(check_array)"
     ]
   }
 }
