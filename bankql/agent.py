@@ -348,8 +348,9 @@ class Agent:
 
     def _summary(self, res: AskResult, src: Source) -> str:
         n = self.cfg.agent.summary_rows
+        first = ["[filtered]" if looks_like_injection(v) else v for v in res.rows[0]] if res.rows else []
         fallback = f"{res.row_count:,} row{'s' if res.row_count != 1 else ''} returned" + (
-            f"; first: {', '.join(f'{c}={v}' for c, v in zip(res.columns, res.rows[0]))}." if res.rows else ".")
+            f"; first: {', '.join(f'{c}={v}' for c, v in zip(res.columns, first))}." if res.rows else ".")
         # Indirect prompt injection: database text that tries to instruct the model is not shown to it.
         rows = [["[filtered]" if looks_like_injection(v) else v for v in r] for r in res.rows[:n]]
         text = self.router.summarize(res.standalone_question, res.columns, rows, res.row_count)
