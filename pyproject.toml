@@ -28,6 +28,9 @@ dependencies = [
   "tenacity",
 ]
 
+[project.scripts]
+bankql = "bankql.cli:main"
+
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "fakeredis", "faker", "func-timeout"]
 
