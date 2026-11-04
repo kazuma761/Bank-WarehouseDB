@@ -6,6 +6,18 @@ Running log. Acceptance gates live in `GATES.md` (checked with
 
 ## Status
 
+### Round 3 (2026-11-04: local GPU handoff, PII-filter permission)
+
+| Item | State |
+|---|---|
+| `scripts/setup_local.sh/.ps1` (BIRD download → SQLite untouched + DuckDB + Postgres `bankql_bird`; Arctic download; Gemma path; DuckDB extensions; check-source) | written; loader tested on a BIRD-shaped DB (original unchanged, counts match, broken gold caught); `.ps1` not runnable here (no PowerShell) |
+| `scripts/serve_local.sh/.ps1` (both llama-servers, 127.0.0.1 + `--api-key`, Arctic `-np 3`, q8_0 K/V, `-fa`) | `.sh` tested against a stand-in llama-server (flags, auth, detach, stop); `.ps1` untested |
+| `scripts/eval_local.sh/.ps1` (Phase 3 + Phase 4 fast/full × evidence + chat smoke + latency + REPORT.md) | `.sh` wiring run end to end with the stand-in (every step ran, errors recorded); real run on the owner's GPU |
+| `eval/make_lookup_set.py` (60 items, 10 styles), `eval/latency_real.py`, `eval/make_report.py` | done + tests |
+| README "Run locally on GPU" | done |
+| PII-filter permission (`pii_filter`, default deny) | done — all paths, tests; SECURITY.md: with per-user identity, the intended fix for differencing |
+| Docker | verify locally |
+
 ### Round 2 (2026-11-04: E, F, B, D, C + decisions)
 
 | Item | State |
@@ -17,7 +29,7 @@ Running log. Acceptance gates live in `GATES.md` (checked with
 | D. Security hardening + `tests/security` (50 tests) + `docs/SECURITY.md` | done — all pass; residual risks listed (differencing attacks on counts first) |
 | C. Latency: spans, LLM stats, optimisations, `eval/latency.py`, `docs/LATENCY.md` | done on FakeLLM — mean 40.9 → 11.2 ms, analytics LLM calls 5.2 → 1.87; no native rewrite warranted |
 | SQLAS advisory only | done — enforcement = validator + PII lineage + small-count rule + our output check |
-| Docker: ECR base image as build ARG | written; **build blocked** — ECR layers come from `d2glxqk2uabbnd.cloudfront.net` (proxy: Forbidden) |
+| Docker: ECR base image as build ARG | written; **verify locally** (owner decision: CloudFront layer host stays blocked here) |
 | DuckDB pinned (`duckdb==2.0.0`) | done |
 | Gemma GGUF | configured: `unsloth/gemma-3-12b-it-GGUF` / `gemma-3-12b-it-Q4_K_M.gguf` (owner's fallback) |
 | A. Real BIRD data | **blocked** — `bird-bench.oss-cn-beijing.aliyuncs.com` still denied (re-checked 2026-11-04) |

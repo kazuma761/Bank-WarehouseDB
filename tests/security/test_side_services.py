@@ -27,14 +27,19 @@ def test_mercer_backend_gets_the_key(cfg, monkeypatch):
     assert eng.backend._client.headers["authorization"] == "Bearer llama-secret"
 
 
-def test_demo_scripts_bind_localhost_with_keys():
-    sh = (ROOT / "scripts/demo.sh").read_text()
-    ps = (ROOT / "scripts/demo.ps1").read_text()
-    for text in (sh, ps):
-        assert "--host" in text and "127.0.0.1" in text and "--api-key" in text
-        assert "0.0.0.0" not in text
-    assert re.search(r"redis-server --bind 127\.0\.0\.1 .*--requirepass", sh)
-    assert "--host 127.0.0.1" in sh and ".venv/bin/uvicorn bankql.api:app --host 127.0.0.1" in sh
+def test_local_scripts_bind_localhost_with_keys():
+    """llama-server is started only by serve_local.(sh|ps1); demo and eval scripts reuse it."""
+    for name in ("serve_local.sh", "serve_local.ps1"):
+        text = (ROOT / "scripts" / name).read_text()
+        assert text.count("127.0.0.1") >= 2 and "--api-key" in text and "0.0.0.0" not in text, name
+    for name in ("demo.sh", "demo.ps1", "eval_local.sh", "eval_local.ps1", "setup_local.sh", "setup_local.ps1"):
+        text = (ROOT / "scripts" / name).read_text()
+        assert "0.0.0.0" not in text, name
+        assert "llama-server -m" not in text and "Start-Process $llama" not in text, f"{name} starts llama-server itself"
+    sh, ev = (ROOT / "scripts/demo.sh").read_text(), (ROOT / "scripts/eval_local.sh").read_text()
+    for text in (sh, ev):
+        assert re.search(r"redis-server --bind 127\.0\.0\.1 .*--requirepass", text)
+        assert "uvicorn bankql.api:app --host 127.0.0.1" in text
 
 
 def test_compose_publishes_only_on_localhost():

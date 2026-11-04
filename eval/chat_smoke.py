@@ -157,6 +157,7 @@ def run(base: str, key: str, source: str, out: Path) -> list[dict]:
                        "row_count": body.get("row_count"), "summary": body.get("summary"),
                        "refusal_reason": body.get("refusal_reason"), "confidence": body.get("confidence"),
                        "warnings": body.get("warnings"), "timings_ms": body.get("timings_ms", {}), "http_ms": http_ms,
+                       "llm_calls": body.get("llm_calls", []),
                        "expect": t.get("expect"), "as_expected": t.get("expect") in (None, body.get("status"))}
                 fh.write(json.dumps(rec, default=str) + "\n")
                 recs.append(rec)

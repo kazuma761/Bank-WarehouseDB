@@ -11,20 +11,25 @@ DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='bankql_ro') THEN CREATE ROLE bankql_ro LOGIN PASSWORD '$PW_RO'; ELSE ALTER ROLE bankql_ro PASSWORD '$PW_RO'; END IF;
 END \$\$;
 SELECT 'CREATE DATABASE bankql_fixture OWNER bankql_admin' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='bankql_fixture')\gexec
+SELECT 'CREATE DATABASE bankql_bird OWNER bankql_admin' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='bankql_bird')\gexec
 ALTER ROLE bankql_ro SET default_transaction_read_only = on;
 ALTER ROLE bankql_ro SET statement_timeout = '5s';
 SQL
-su postgres -c "psql -v ON_ERROR_STOP=1 -q -d bankql_fixture" <<'SQL'
-REVOKE ALL ON DATABASE bankql_fixture FROM PUBLIC;
-GRANT CONNECT ON DATABASE bankql_fixture TO bankql_ro, bankql_admin;
+for DB in bankql_fixture bankql_bird; do  # fixture (tests) and the real BIRD copy
+su postgres -c "psql -v ON_ERROR_STOP=1 -q -d $DB" <<SQL
+REVOKE ALL ON DATABASE $DB FROM PUBLIC;
+GRANT CONNECT ON DATABASE $DB TO bankql_ro, bankql_admin;
 GRANT USAGE ON SCHEMA public TO bankql_ro;
 GRANT ALL ON SCHEMA public TO bankql_admin;
 ALTER DEFAULT PRIVILEGES FOR ROLE bankql_admin IN SCHEMA public GRANT SELECT ON TABLES TO bankql_ro;
 SQL
-grep -v '^BANKQL_PG' .env 2>/dev/null > .env.tmp || true
+done
+grep -v -e '^BANKQL_PG' -e '^BANKQL_BIRD_PG' .env 2>/dev/null > .env.tmp || true
 cat >> .env.tmp <<ENV
 BANKQL_PG_ADMIN_URL=postgresql+psycopg://bankql_admin:$PW_ADMIN@localhost:5432/bankql_fixture
 BANKQL_PG_URL=postgresql+psycopg://bankql_ro:$PW_RO@localhost:5432/bankql_fixture
+BANKQL_BIRD_PG_ADMIN_URL=postgresql+psycopg://bankql_admin:$PW_ADMIN@localhost:5432/bankql_bird
+BANKQL_BIRD_PG_URL=postgresql+psycopg://bankql_ro:$PW_RO@localhost:5432/bankql_bird
 ENV
 mv .env.tmp .env; chmod 600 .env
 echo "postgres ready; credentials in .env"

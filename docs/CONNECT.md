@@ -325,6 +325,10 @@ container reaches it at `host.docker.internal`. CPU-only hosts can run one model
 | `BANKQL_REDIS_URL`, `BANKQL_REDIS_PASSWORD` | Redis for Mercer's schema cache (`redis://:<pw>@127.0.0.1:6379/0`) |
 | *per source* `url_env` | e.g. `BANKQL_FINANCIAL_URL`, `BANKQL_DEMO_URL`, `BANKQL_PG_URL`, `BANKQL_BIRD_URL`, `BANKQL_TRINO_URL` |
 | `BANKQL_PG_ADMIN_URL` | fixture loading only (`scripts/make_fixture.py`) |
+| `BANKQL_BIRD_DEMO_URL`, `BANKQL_BIRD_PG_URL` | BIRD financial copies (DuckDB + Postgres, with synthetic `client_profile`), written by `scripts/load_bird.py` / `setup_postgres.sh` |
+| `BANKQL_BIRD_PG_ADMIN_URL` | loading the BIRD copy into Postgres (`scripts/load_bird.py`) |
+| `BANKQL_ROUTER_GGUF`, `BANKQL_SQL_GGUF` | model files for `scripts/serve_local.*` (set by `setup_local`; default `models/<hf_file>`) |
+| `BANKQL_NGL`, `BANKQL_FA_FLAG` | `serve_local`: GPU layers (default 99) and the flash-attention flag (default `-fa on`; older llama.cpp: `-fa`) |
 | `BANKQL_PG_ADMIN_PASSWORD`, `BANKQL_PG_RO_PASSWORD` | docker-compose Postgres init |
 | `BANKQL_MCP_API_KEY` | MCP server only: the key whose policy applies; MCP `run_sql` exists only if that key has `run_sql: true` |
 | `BANKQL_MERCER_LOG_LEVEL` | Mercer log level (default `WARNING`) |

@@ -43,6 +43,19 @@ sources:
     # trans freely. Production sources keep the guard.
     large_tables: {}
 
+  bird_demo:                           # real BIRD financial + synthetic client_profile (scripts/load_bird.py)
+    <<: *defaults
+    description: BIRD financial + synthetic client_profile — DuckDB
+    url_env: BANKQL_BIRD_DEMO_URL        # duckdb:///data/bird_demo.duckdb
+    dialect: duckdb
+    large_scan_threshold_rows: 500000    # BIRD trans has ~1M rows
+  bird_pg:
+    <<: *defaults
+    description: BIRD financial + synthetic client_profile — PostgreSQL (role bankql_ro)
+    url_env: BANKQL_BIRD_PG_URL          # postgresql+psycopg://bankql_ro:…@localhost:5432/bankql_bird
+    dialect: postgresql
+    large_scan_threshold_rows: 500000
+
 # Dev-mode federation: one DuckDB engine ATTACHes member sources; queries use member.table names.
 federations:
   fed_dev:

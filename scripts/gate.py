@@ -212,6 +212,9 @@ GATES = {
     "pushed": pushed, "demo": demo, "demo_scripts": demo_scripts, "connect_doc": connect_doc,
     "cli": lambda: pytest("tests/test_cli.py"), "chat_smoke": chat_smoke, "security": security, "latency": latency,
     "docker": docker, "pins2": pins2, "all2": all2, "bird": bird,
+    "local_tooling": lambda: pytest("tests/test_local_tooling.py"),
+    "pii_filter": lambda: pytest("tests/test_pii_lineage.py", "tests/security/test_small_counts.py", "-k",
+                                 "default_key or permission or pii_filter or bucketed or letter"),
 }
 
 if __name__ == "__main__":

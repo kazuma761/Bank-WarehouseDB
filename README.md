@@ -87,12 +87,58 @@ Auth: `X-API-Key: <key>` or `Authorization: Bearer <key>`; keys from `BANKQL_API
 constant-time comparison, fail closed when unset). Docker: `Dockerfile` + `docker-compose.yml`
 (API + Redis + Postgres; llama-server on the host).
 
-## GPU (RTX 4080 Super, 16 GB)
+## Run locally on GPU (RTX 4080 Super, 16 GB)
 
-Phase 6 — `scripts/serve_local.sh|.ps1` and `scripts/eval_local.*` are still to be written (PROGRESS.md
-"Later"). Target layout: Gemma on :8080 (`-ngl 99 -c 8192`), Arctic on :8081
-(`-ngl 99 -c 24576 -np 3 --cache-type-k q8_0 --cache-type-v q8_0`; depending on the llama.cpp version the
-quantized V cache may need flash attention, `-fa`).
+Real models and real BIRD data run on your workstation; the cloud session only had synthetic data and FakeLLM.
+Both models stay resident: Gemma 12B Q4_K_M (~7.3 GB) + Arctic-Text2SQL-R1-7B IQ4_XS (~4.2 GB) + KV caches fit in
+16 GB with Arctic's q8_0 cache.
+
+**Prerequisites** — NVIDIA driver + CUDA, a CUDA build of llama.cpp (`llama-server` on PATH, or set
+`LLAMA_SERVER`), [uv](https://docs.astral.sh/uv/), your Gemma 12B GGUF on disk. Linux: PostgreSQL 16 + Redis
+installed (`sudo apt install postgresql-16 redis-server unzip`). Windows: Docker Desktop (Postgres + Redis run in
+containers bound to 127.0.0.1).
+
+**1. Set up once** — Python env, secrets, Postgres roles (`bankql_ro` read-only) and databases, synthetic fixture,
+BIRD mini-dev download (`financial` into SQLite untouched + DuckDB + Postgres copies), Arctic download, your Gemma
+path, DuckDB extensions for the pinned DuckDB 2.0.0, then `bankql check-source` on every source:
+
+```bash
+scripts/setup_local.sh --gemma /path/to/gemma-3-12b-it-Q4_K_M.gguf
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup_local.ps1 -Gemma C:\models\gemma-3-12b-it-Q4_K_M.gguf
+```
+
+**2. Serve both models** — Gemma on `127.0.0.1:8080`, Arctic on `127.0.0.1:8081` (`-np 3`, q8_0 K/V cache, flash
+attention), both with `--api-key $BANKQL_LLAMA_API_KEY` from `.env`. Older llama.cpp builds take `-fa` without a
+value: set `BANKQL_FA_FLAG=-fa`.
+
+```bash
+scripts/serve_local.sh --detach        # or without --detach to keep it in the foreground; --stop to stop
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\serve_local.ps1 -Detach
+```
+
+**3. Evaluate** — Phase 3 lookup eval (60 questions generated from the data), Phase 4 BIRD financial in fast and
+full mode with and without evidence, the 31-conversation chat smoke test through `/v1/ask`, latency with prefill /
+decode per LLM call, then `REPORT.md`. Every step is resumable; run a subset with step names:
+
+```bash
+scripts/eval_local.sh                  # or: scripts/eval_local.sh lookup analytics chat latency report
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\eval_local.ps1
+```
+
+**4. Read the results** — `REPORT.md` (accuracy tables with sample sizes, failure examples, latency, the
+router-threshold calibration table), raw files in `eval/results/`. Fill in the 10-row spot-check table in
+`REPORT.md` by hand, then set `router.confidence_threshold` from the calibration table.
+
+**5. Try it** — `scripts/demo.sh` (or `scripts\demo.ps1`) starts everything and prints `http://127.0.0.1:8000/demo`.
+
+The Docker image (`Dockerfile`, `docker-compose.yml`) is **not yet verified** — it could not be built in the cloud
+session; build it locally with `docker build -t bankql .` (base image registry is the `REGISTRY` build ARG).
 
 ## Layout
 

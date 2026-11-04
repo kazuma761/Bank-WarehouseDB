@@ -23,20 +23,8 @@ docker compose up -d postgres redis
 if (-not (Test-Path data\fixture\financial.sqlite)) { .venv\Scripts\python scripts\make_fixture.py }
 
 $procs = @()
-function Model($role) { .venv\Scripts\python -c "import yaml;print('models/'+yaml.safe_load(open('config/models.yaml'))['$role']['hf_file'])" }
-function Serve($name, $port, $gguf, $extra) {
-  if (-not (Test-Path $gguf)) { Write-Host "!! $gguf missing"; return }
-  $args = @("-m", $gguf, "--host", "127.0.0.1", "--port", $port, "--api-key", $env:BANKQL_LLAMA_API_KEY, "-ngl", "99") + $extra
-  $p = Start-Process llama-server -ArgumentList $args -RedirectStandardError "data\logs\$name.log" -PassThru -NoNewWindow
-  $script:procs += $p
-  foreach ($i in 1..180) {
-    try { Invoke-WebRequest "http://127.0.0.1:$port/v1/models" -Headers @{Authorization = "Bearer $($env:BANKQL_LLAMA_API_KEY)"} -UseBasicParsing | Out-Null; Write-Host "   $name ready on :$port"; return } catch { Start-Sleep 2 }
-  }
-}
 Write-Host "== llama-server (GPU)"
-Serve "router" 8080 (Model "router") @("-c", "8192")
-# -fa (flash attention) may be required for the quantized V cache, depending on the llama.cpp version
-Serve "sql" 8081 (Model "sql") @("-c", "24576", "-np", "3", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "-fa", "on")
+& scripts\serve_local.ps1 -Detach
 
 Write-Host "== BankQL API"
 $api = Start-Process .venv\Scripts\uvicorn -ArgumentList "bankql.api:app", "--host", "127.0.0.1", "--port", "8000" -RedirectStandardError data\logs\api.log -PassThru -NoNewWindow
@@ -45,4 +33,5 @@ foreach ($i in 1..60) { try { Invoke-WebRequest http://127.0.0.1:8000/health -Us
 Write-Host "`nDemo:    http://127.0.0.1:8000/demo`nAPI key: first value of BANKQL_API_KEYS in .env`nPress Enter to stop."
 Read-Host | Out-Null
 $procs | ForEach-Object { Stop-Process -Id $_.Id -ErrorAction SilentlyContinue }
+& scripts\serve_local.ps1 -Stop
 docker compose stop postgres redis

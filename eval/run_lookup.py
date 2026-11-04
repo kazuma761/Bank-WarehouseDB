@@ -26,6 +26,10 @@ a = ap.parse_args()
 items = load_jsonl(a.items)
 bad = leaks(items, prompt_corpus(ROOT))
 assert not bad, f"evaluation items leak into prompts: {bad}"
-agent = Agent.from_config(ROOT / "config")
+from bankql.config import load_config  # noqa: E402
+
+cfg = load_config(ROOT / "config")
+cfg.agent.verified_cache = False  # hard rule 5: evaluation questions never enter the verified-query library
+agent = Agent(cfg)
 print(run_jsonl(items, lookup_task(agent, a.source), a.out, limit=a.limit))
 print(json.dumps(summarize(latest(load_jsonl(a.out)), ["intent_ok", "args_ok", "rows_ok", "status_ok"]), indent=2))

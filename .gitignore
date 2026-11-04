@@ -18,3 +18,9 @@ __pycache__/
 .unlazy-hook-state.json
 .claude/settings.local.json
 bankql.bundle
+/data/logs/
+/data/mercer/
+/data/verified_queries.json
+/data/bird
+/eval/datasets/lookup_bird.jsonl
+/data/mercer_mappings.yaml
