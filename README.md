@@ -6,12 +6,128 @@ Natural-language questions over bank data, answered by **local open-weight model
 pipeline. Rows always come straight from the database. See `SPEC.md` for the full brief and decisions,
 `PROGRESS.md` for status, `docs/THIRD_PARTY.md` for what was reused and how it differs from the brief.
 
+## How it works
+
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph Callers
+        APP["Your application<br/>(REST /v1/ask)"]
+        OTHER["MCP server · OpenAI-compatible<br/>endpoint · Python library"]
+    end
+
+    subgraph BankQL["BankQL (Python, FastAPI)"]
+        AUTH["Auth + policy<br/>hashed API keys, per-key sources,<br/>pii_filter, rate limits"]
+        AGENT["Agent<br/>bankql/agent.py"]
+        ROUTER["Router<br/>bankql/router.py"]
+        LOOKUP["Resolver + 6 fixed SQL tools<br/>bankql/resolver.py, tools/"]
+        MERCER["Mercer pipeline<br/>bankql/analytics/"]
+        GUARD["SQL validator + PII rules<br/>bankql/guardrails.py (sqlglot AST)"]
+        SEM[("Semantic model<br/>config/semantic/*.yaml")]
+        VQ[("Verified-query cache")]
+        AUDIT[("Audit log, DuckDB<br/>PII masked")]
+        EXPORT[("CSV / Parquet exports<br/>per key, 24 h TTL")]
+    end
+
+    subgraph Models["llama.cpp llama-server (127.0.0.1, --api-key)"]
+        GEMMA["Gemma 3 12B :8080<br/>route · rewrite · summarize"]
+        ARCTIC["Arctic-Text2SQL-R1-7B :8081<br/>SQL generation"]
+    end
+
+    subgraph Data["Read-only sources"]
+        DB[("SQLite · DuckDB · PostgreSQL<br/>(role bankql_ro) · Trino")]
+    end
+
+    REDIS[("Redis<br/>Mercer schema cache")]
+
+    APP --> AUTH
+    OTHER --> AUTH
+    AUTH --> AGENT
+    AGENT --> ROUTER --> GEMMA
+    AGENT --> LOOKUP --> GUARD
+    AGENT --> MERCER --> ARCTIC
+    MERCER --> REDIS
+    MERCER --> GUARD
+    GUARD --> DB
+    SEM -.-> ROUTER
+    SEM -.-> LOOKUP
+    SEM -.-> MERCER
+    SEM -.-> GUARD
+    AGENT <--> VQ
+    AGENT --> AUDIT
+    AGENT --> EXPORT
 ```
-question → SQLAS input guard → (follow-up rewrite) → router (Gemma, JSON schema)
-   ├─ lookup    → deterministic resolver → fixed tools (get_client/accounts/statement/cards/loans/orders)
-   └─ analytics → Mercer (Arctic-Text2SQL) → sqlglot validator (≤2 tries) → read-only run + CSV/Parquet export
-→ plausibility checks → SQLAS output guard → rows + SQL + 1–2 line summary (numbers checked) → DuckDB audit log
+
+Two paths, one rule: **every SQL statement passes the validator and runs on a read-only connection**, and rows
+always come straight from the database, never from a model.
+
+- **Lookup** ("show client 12's accounts"): the router picks one of six fixed, parameterized tools; the resolver
+  turns names and ids into keys. No SQL is written by a model.
+- **Analytics** ("which districts have the most loans in debt?"): Mercer asks Arctic for SQL, the validator checks
+  it, and a rejected query goes back once with the error as feedback (at most 2 attempts).
+
+### What happens to one question
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Caller (your app)
+    participant API as REST API
+    participant A as Agent
+    participant G as Gemma :8080
+    participant M as Mercer + Arctic :8081
+    participant V as Validator
+    participant DB as Read-only DB
+    participant L as Audit log
+
+    U->>API: POST /v1/ask {question, source, session_id}
+    API->>API: check API key, allowed source, rate limit
+    API->>A: ask(question, principal)
+    A->>A: input check (advisory warnings only)
+    opt follow-up question in a session
+        A->>G: rewrite into a standalone question
+    end
+    alt verified-query cache hit
+        A->>V: re-validate the cached SQL
+    else
+        A->>G: route (JSON schema: intent, tools, confidence)
+        alt low confidence or unsupported
+            A-->>U: polite refusal or clarifying question
+        else lookup
+            A->>DB: fixed parameterized SQL tool
+        else analytics
+            loop at most 2 attempts
+                A->>M: generate SQL (with validator feedback on retry)
+                M->>V: validate before EXPLAIN
+                V-->>A: OK, or rejection code
+            end
+        end
+    end
+    A->>DB: run validated SELECT (row cap, timeout)
+    DB-->>A: rows
+    A->>A: plausibility checks (empty, reads no table, row explosion)
+    alt analytics
+        A->>G: 1–2 line summary (numbers checked against the rows)
+    else lookup
+        A->>A: template summary
+    end
+    A->>A: output check (no unmasked phone or e-mail)
+    A->>L: audit row (question, SQL, route, latency, PII masked)
+    A-->>API: AskResult
+    API-->>U: rows + SQL + summary + export link
 ```
+
+### What the validator rejects
+
+| Code | Meaning |
+|---|---|
+| `not_select`, `multi_statement`, `forbidden_node`, `forbidden_function` | anything that is not a single read-only SELECT |
+| `table_not_allowed` | a table outside the source's allowlist |
+| `pii_output`, `pii_filter_denied`, `pii_filter_shape`, `pii_unverifiable` | PII columns in the output, or used as a filter without permission (column lineage through joins, CTEs and UNIONs) |
+| `unbounded_large_scan` | a large table scanned without a time filter |
+
+Details: `docs/SECURITY.md`. The SQLAS checks run too, but only add warnings; enforcement is the validator.
 
 ## Quickstart (CPU, synthetic data)
 
