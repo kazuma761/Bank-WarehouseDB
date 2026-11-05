@@ -24,6 +24,7 @@ Full suite — **527 passed, 1 skipped** (the skip is the DuckDB-extension feder
 | D3 | Errors: no tracebacks, driver text, SQL echoes, connection strings; generic 500 handler; details only in the audit log | `test_access.py` | PASS |
 | D3 | API keys stored as SHA-256 only; constant-time comparison; fail closed with no keys | `test_access.py`, `test_api.py` | PASS |
 | D4 | Audit log: names, contacts and PII literals in SQL masked (`[PII]`, `'***'`); file 0600; retention purge (default 90 days) | `test_audit_privacy.py` (4) | PASS |
+| D6 | **Plugging in data** (`/admin`, `/v1/admin/*`, `bankql import / connect`): admin keys only (`BANKQL_ADMIN_KEYS` or `admin: true`; default deny, 403); a source is saved only when `check-source` has no FAIL, so writable / CREATE-capable Postgres roles are refused; URLs stored only in `.env` (0600) and never echoed; suspected PII columns flagged from column names and never sampled; uploads capped (`BANKQL_IMPORT_MAX_MB`, default 500) and deleted after loading; sources in `sources.yaml` can't be replaced or removed; every admin action audited | `test_onboarding.py` (20) | PASS — negative control: the `bankql_admin` role fails 3 checks and nothing is written |
 | D5 | Indirect prompt injection in DB values: dropped from M-Schema samples; replaced by `[filtered]` in summary prompts and template summaries; summaries containing instructions/URLs/contacts replaced; routing and SQL unchanged; values still returned verbatim as data | `test_indirect_injection.py` (3) | PASS |
 
 Found and fixed while building the suite: the template fallback summary echoed an injected cell verbatim; a
@@ -57,7 +58,11 @@ corrector "fix" to `SELECT 1` (reads no table) was accepted as an answer; `bankq
    shared key in the environment.
 10. **False refusals:** the small-count output check looks at the outermost SELECT only, so a legitimate
     `COUNT(DISTINCT name)` written through a CTE is refused (the same query without the CTE passes).
-11. **Not verified here:** the Docker image (base-image layers blocked), federation members (DuckDB extensions
+11. **Admin keys are powerful.** An admin can point BankQL at any database the API host can reach and at any file
+    path a DuckDB/SQLite URL names, and imported files are not scanned. Give admin keys only to the people who
+    run BankQL; keep `/admin` on 127.0.0.1. PII flags on imported data come from column names only — review the
+    generated YAML before exposing a source to other keys.
+12. **Not verified here:** the Docker image (base-image layers blocked), federation members (DuckDB extensions
     blocked), behaviour with the real models (not downloaded yet).
 
 ## Reporting

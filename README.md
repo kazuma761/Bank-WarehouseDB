@@ -46,6 +46,35 @@ threshold (0.6 is a **starting value**, to be calibrated on the Phase 3 lookup e
 | SQLAS | `check_input` (injection / malicious intent / credential / bypass block; bulk-PII patterns are audited warnings), `check_sql` on comment-free SQL, `check_output` on PII cells + date-stripped summary. |
 | Refusal | Low router confidence (intent logprobs when the server returns them), IDs/dates not written in the question, validation failing twice, empty results, row explosion, ungrounded summary numbers (summary replaced). |
 
+## Plug in your own data
+
+Two ways, both read-only and both checked before anything is saved:
+
+- **Browser:** open `http://127.0.0.1:8000/admin`, enter the admin key (`BANKQL_ADMIN_KEYS` in `.env`; `setup_local`
+  and `demo` create one), then
+  - **Import files**: pick CSV / TSV / Parquet files and a source name. Each file becomes a table in a local DuckDB
+    database (`data/imports/<name>.duckdb`); importing the same file name again replaces that table.
+  - **Connect a database**: paste a SQLAlchemy URL for a **read-only** user, check it, tick the tables BankQL may
+    read, add it. A user that can write (or create tables) is refused. The URL is stored only in `.env`.
+- **Command line** (picked up by the API on restart):
+
+```bash
+.venv/bin/bankql import sales data/sales.csv data/targets.parquet
+```
+```bash
+.venv/bin/bankql connect crm --tables customers,orders      # asks for the URL
+```
+```bash
+.venv/bin/bankql remove-source sales                        # data files stay on disk
+```
+
+Then ask at `/demo?source=sales`. For every table a semantic skeleton is written to
+`config/semantic/local/<name>/<table>.yaml`: columns whose name looks personal (name, email, phone, address,
+birth…) are flagged `pii: true` and blocked from answers until you change that. Filling in the `TODO` descriptions
+and code meanings makes answers noticeably better; until then they are ignored. Plugged-in sources go straight to
+the analytics path (the router and lookup tools are specific to the bank schema). Added sources live in
+`config/sources.local.yaml` (git-ignored) and never replace a source from `config/sources.yaml`.
+
 ## Data sources
 
 `config/sources.yaml` names each source; the SQLAlchemy URL comes from an **environment variable** (`url_env`).

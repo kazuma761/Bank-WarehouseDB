@@ -13,6 +13,8 @@ foreach ($k in "BANKQL_LLAMA_API_KEY", "BANKQL_REDIS_PASSWORD", "BANKQL_PG_ADMIN
 }
 if ((Get-Content .env -Raw) -match "(?m)^BANKQL_API_KEYS=change-me") {
   (Get-Content .env) -replace "^BANKQL_API_KEYS=.*", "BANKQL_API_KEYS=demo-$(Rand)" | Set-Content .env }
+if ((Get-Content .env -Raw) -notmatch "(?m)^BANKQL_ADMIN_KEYS=.+") {
+  (Get-Content .env | Where-Object { $_ -notmatch "^BANKQL_ADMIN_KEYS=" }) + "BANKQL_ADMIN_KEYS=admin-$(Rand)" | Set-Content .env }
 Get-Content .env | Where-Object { $_ -match "^[A-Z_]+=" } | ForEach-Object { $k, $v = $_ -split "=", 2; Set-Item "env:$k" $v }
 $env:BANKQL_PG_URL = "postgresql+psycopg://bankql_ro:$($env:BANKQL_PG_RO_PASSWORD)@127.0.0.1:5432/bankql_fixture"
 $env:BANKQL_PG_ADMIN_URL = "postgresql+psycopg://bankql_admin:$($env:BANKQL_PG_ADMIN_PASSWORD)@127.0.0.1:5432/bankql_fixture"
@@ -30,7 +32,7 @@ Write-Host "== BankQL API"
 $api = Start-Process .venv\Scripts\uvicorn -ArgumentList "bankql.api:app", "--host", "127.0.0.1", "--port", "8000" -RedirectStandardError data\logs\api.log -PassThru -NoNewWindow
 $procs += $api
 foreach ($i in 1..60) { try { Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing | Out-Null; break } catch { Start-Sleep 1 } }
-Write-Host "`nDemo:    http://127.0.0.1:8000/demo`nAPI key: first value of BANKQL_API_KEYS in .env`nPress Enter to stop."
+Write-Host "`nDemo:    http://127.0.0.1:8000/demo`nAPI key: first value of BANKQL_API_KEYS in .env`nAdd data: http://127.0.0.1:8000/admin (admin key: BANKQL_ADMIN_KEYS in .env)`nPress Enter to stop."
 Read-Host | Out-Null
 $procs | ForEach-Object { Stop-Process -Id $_.Id -ErrorAction SilentlyContinue }
 & scripts\serve_local.ps1 -Stop

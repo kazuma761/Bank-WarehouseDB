@@ -18,6 +18,8 @@ ensure_env BANKQL_LLAMA_API_KEY
 ensure_env BANKQL_REDIS_PASSWORD
 grep -q "^BANKQL_API_KEYS=..*" .env && ! grep -q "^BANKQL_API_KEYS=change-me" .env || {
   sed -i.bak '/^BANKQL_API_KEYS=/d' .env && echo "BANKQL_API_KEYS=demo-$(python3 -c 'import secrets;print(secrets.token_hex(12))')" >> .env; }
+grep -q "^BANKQL_ADMIN_KEYS=..*" .env || {
+  sed -i.bak '/^BANKQL_ADMIN_KEYS=/d' .env && echo "BANKQL_ADMIN_KEYS=admin-$(python3 -c 'import secrets;print(secrets.token_hex(12))')" >> .env; }
 . scripts/env.sh
 export BANKQL_REDIS_URL="redis://:${BANKQL_REDIS_PASSWORD}@127.0.0.1:6379/0"
 
@@ -47,5 +49,6 @@ for _ in $(seq 1 60); do curl -sf "http://127.0.0.1:$PORT/health" >/dev/null && 
 echo
 echo "Demo:     http://127.0.0.1:$PORT/demo"
 echo "API key:  first value of BANKQL_API_KEYS in .env"
+echo "Add data: http://127.0.0.1:$PORT/admin   (admin key: BANKQL_ADMIN_KEYS in .env)"
 echo "Logs:     data/logs/   (Ctrl-C to stop)"
 wait

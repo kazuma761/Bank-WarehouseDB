@@ -22,12 +22,12 @@ Scope: Steps 1–9 from the owner's 2026-11-04 instruction — skeleton, pinned 
 - [x] G4: Validator rejects DDL/DML (top level, in CTEs, in subqueries), multi-statement input and unfiltered large-table scans, while a known-good SELECT on the same table passes (positive control)
   CHECK: .venv/bin/python scripts/gate.py validator
   EXPECT: GATE validator OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=4e36b85548d646a0fceb7880e22b8321e20f5db36dc7c7164d52ce3d1b6805f1; exit=0; EXPECT=matched; output-sha256=61a487a76cf77e4629825852c32d033a18c1130263f281dab8d0ae52f04a7d26; output-bytes=200; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=4e36b85548d646a0fceb7880e22b8321e20f5db36dc7c7164d52ce3d1b6805f1; exit=0; EXPECT=matched; output-sha256=18e5b7cc77f75043fea3862aae6611f80fd0abd6acc4cb9d3d32e56b36d47ae6; output-bytes=200; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G5: Phase 2 core test suite (connectors, guardrails incl. PII lineage, resolver, lookup tools, exporter, audit) passes on SQLite, DuckDB and Postgres with no skipped tests
   CHECK: .venv/bin/python scripts/gate.py core
   EXPECT: GATE core OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=be76f62d6ee331e63c81dbd288c973e93bebe55dd9af553dc29784a69930ca5d; exit=0; EXPECT=matched; output-sha256=5775ffd9829bb51123ec6d30e8a006cbdcf294db159ae585b27f50102e284006; output-bytes=355; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=be76f62d6ee331e63c81dbd288c973e93bebe55dd9af553dc29784a69930ca5d; exit=0; EXPECT=matched; output-sha256=c22f37c3d709e1ffb9fee3448cb05aed807e04f73a5893148fe18c47092302ec; output-bytes=355; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [ ] G6: DuckDB federation joins the SQLite fixture to the Postgres copy in one query
   CHECK: .venv/bin/python scripts/gate.py federation
@@ -37,22 +37,22 @@ Scope: Steps 1–9 from the owner's 2026-11-04 instruction — skeleton, pinned 
 - [x] G7: Semantic YAML loads, and the generated Mercer mappings.yaml is accepted by the ported Mercer SemanticMapper with every table and column described
   CHECK: .venv/bin/python scripts/gate.py semantic
   EXPECT: GATE semantic OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=613209f991b683ba75d3f802fc4c52a18fd3d6453227fc5d2f2795abff26484b; exit=0; EXPECT=matched; output-sha256=2e7d638f16f12519a8b56b33f629bc2a9764510991403010933d29fdf1f75447; output-bytes=117; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=613209f991b683ba75d3f802fc4c52a18fd3d6453227fc5d2f2795abff26484b; exit=0; EXPECT=matched; output-sha256=dd822e857417acae9df1c68e386e540fcd432d875a184b3d9ee6bdd945366d2a; output-bytes=117; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G8: AnalyticsEngine fast mode and full mode answer fixture questions end to end on FakeLLM, and importing the analytics stack never imports torch or triton
   CHECK: .venv/bin/python scripts/gate.py analytics
   EXPECT: GATE analytics OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=7cda8912fedea77e0b5ab3aa0d692c3730b01b4e9ebe0c7224b9fd0d6c27cbfc; exit=0; EXPECT=matched; output-sha256=3ec180b6776b70ca9ef8521559b03b702abf5de46c2654573ec754cbb290768c; output-bytes=119; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=7cda8912fedea77e0b5ab3aa0d692c3730b01b4e9ebe0c7224b9fd0d6c27cbfc; exit=0; EXPECT=matched; output-sha256=347bb2373777344913e8200cdf537e07cf1803a140fd572f9b2f693ce7df217f; output-bytes=119; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G9: Python library, REST API (incl. auth, SSE, CSV export), MCP server and OpenAI-compatible endpoint pass end-to-end tests on FakeLLM
   CHECK: .venv/bin/python scripts/gate.py surfaces
   EXPECT: GATE surfaces OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=0ee37d72cd81f754eea1629f7598bda7d8160fcd237e86eb8db1c1b7b8b65cbd; exit=0; EXPECT=matched; output-sha256=ba4eedc8f5924626cda2051e13b14655db57395999bf3577eb3cd55470dd369a; output-bytes=199; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=0ee37d72cd81f754eea1629f7598bda7d8160fcd237e86eb8db1c1b7b8b65cbd; exit=0; EXPECT=matched; output-sha256=caeb07526eacd435889f17479e57deb7dc63ab430fd84b74d2cadc1bc7943eb1; output-bytes=199; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G10: Eval harness resumes from a partial JSONL without redoing items, and our BIRD EX equals the official mini_dev calculate_ex on every test case
   CHECK: .venv/bin/python scripts/gate.py eval
   EXPECT: GATE eval OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=8365047d476d6d2016554c55ea7207ec8dee47c4fe481c9361f3b5eb382b2950; exit=0; EXPECT=matched; output-sha256=a6c8eb17b9197d208645270a3a95c960ce4efecf459a3abb765198198343605b; output-bytes=114; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=8365047d476d6d2016554c55ea7207ec8dee47c4fe481c9361f3b5eb382b2950; exit=0; EXPECT=matched; output-sha256=a30e5481e2f9199e465af10b2ea4345c66f16612ceec562f7509d3646d052b0d; output-bytes=114; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G11: llama-cpp-python[server] built from PyPI imports its server module in .venv-llama
   CHECK: .venv/bin/python scripts/gate.py llama
@@ -85,7 +85,7 @@ ABANDON: G12 The only non-real_llm skip is the G6 federation test (same blocker)
 - [x] G16: scripts/demo.sh parses, and demo.sh / demo.ps1 / compose bind llama-server, Redis and the API to 127.0.0.1 with keys/passwords
   CHECK: .venv/bin/python scripts/gate.py demo_scripts
   EXPECT: GATE demo_scripts OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=aebde252b319db2d5d8dfd2d4a7c6cdd959dafef4c98dd66ba2cb2145c089aa3; exit=0; EXPECT=matched; output-sha256=eaf0d2272373c513257e727e35cf8b0134d1c98c160bd3a1511e045eb9d95998; output-bytes=121; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=aebde252b319db2d5d8dfd2d4a7c6cdd959dafef4c98dd66ba2cb2145c089aa3; exit=0; EXPECT=matched; output-sha256=8ec00c6e9ac65103cf18d22921ba62c3d6feb131b66633ec98dff9fa210a82d5; output-bytes=121; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G17: docs/CONNECT.md covers app→BankQL (schema incl. user_id, errors, timeouts, exports, curl/Python/JS/Java), six DB templates with read-only-user SQL, large tables, and every environment variable the code reads
   CHECK: .venv/bin/python scripts/gate.py connect_doc
@@ -95,7 +95,7 @@ ABANDON: G12 The only non-real_llm skip is the G6 federation test (same blocker)
 - [x] G18: bankql check-source passes on SQLite/DuckDB/Postgres, fails on the writable admin role without attempting a write, and init-source writes a loadable skeleton
   CHECK: .venv/bin/python scripts/gate.py cli
   EXPECT: GATE cli OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=96d027c7beeb63e3854cd1b712ccba20ef247d473b0f7b922a1baaaa255d15d9; exit=0; EXPECT=matched; output-sha256=79bab1afcb8171c0e8bf0e71b5d79fca51ca841611f92840289a1d394b861cc3; output-bytes=113; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=96d027c7beeb63e3854cd1b712ccba20ef247d473b0f7b922a1baaaa255d15d9; exit=0; EXPECT=matched; output-sha256=160bf210ba9770ec349f1d3d6ee8736a577d773d0cf05375a57d8de23f5e57b2; output-bytes=113; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G19: eval/chat_smoke.py runs at least 30 conversations through /v1/ask (FakeLLM) and every turn's outcome matches its fixture expectation, with route, SQL, rows and refusals logged per turn
   CHECK: .venv/bin/python scripts/gate.py chat_smoke
@@ -105,12 +105,12 @@ ABANDON: G12 The only non-real_llm skip is the G6 federation test (same blocker)
 - [x] G20: The adversarial suite tests/security passes with no skips and docs/SECURITY.md reports its results and residual risks
   CHECK: .venv/bin/python scripts/gate.py security
   EXPECT: GATE security OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=1a06feb4e6eb3c4d763f86257f09461931db92a7226ec72220636d2ebf3bbbac; exit=0; EXPECT=matched; output-sha256=15c07f5054d6efbcda6786caf72919912df1d492263dfda6cfc1256caa1d1744; output-bytes=36; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=1a06feb4e6eb3c4d763f86257f09461931db92a7226ec72220636d2ebf3bbbac; exit=0; EXPECT=matched; output-sha256=64ee291d0f3127cd2c705576098f49cef10dc3940e2df63c0ea2d9ab27246179; output-bytes=36; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G21: Latency report measured before vs after (FakeLLM): per-stage p50/p95, LLM calls and prompt size per question, cProfile shares of LLM / our Python / DB, and the optimisations' effect
   CHECK: .venv/bin/python scripts/gate.py latency
   EXPECT: GATE latency OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=2d031f5053b96d4240b332c82354cfd1497b6ab8e4c8184a6390f6f278880a46; exit=0; EXPECT=matched; output-sha256=f5d052c9ee82764ef791aedd24c0ca25f82f62e42ca07f69efd492ac454cbba7; output-bytes=70; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=2d031f5053b96d4240b332c82354cfd1497b6ab8e4c8184a6390f6f278880a46; exit=0; EXPECT=matched; output-sha256=566a05ea0c76fc03b26843cc29901b1bcdce4bb19aa787ca640370f09ced745d; output-bytes=71; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [ ] G22: Docker image builds from the ECR base image (REGISTRY build ARG)
   CHECK: .venv/bin/python scripts/gate.py docker
@@ -125,17 +125,22 @@ ABANDON: G12 The only non-real_llm skip is the G6 federation test (same blocker)
 - [x] G24: Full suite green; the only skip is the federation test reporting the DuckDB-extension blocker
   CHECK: .venv/bin/python scripts/gate.py all2
   EXPECT: GATE all2 OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=1630ac9a24219901f5881d14f5437f9cb80beb632a011aa22cbf3fe037521a6b; exit=0; EXPECT=matched; output-sha256=1e849eaac5766b1527a09d84d2305fb52176494f638817d825b68ce41021f908; output-bytes=545; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=1630ac9a24219901f5881d14f5437f9cb80beb632a011aa22cbf3fe037521a6b; exit=0; EXPECT=matched; output-sha256=e6fd276d030c2dff95f7f36032ee9ea7cf1277c336c53180c11f2d7ea1233bdf; output-bytes=555; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G26: Local GPU tooling works without models: BIRD loader copies a BIRD-shaped DB without touching the original and rejects an unexpected schema; lookup set = 60 items in 10 styles with no prompt leakage; REPORT.md renders every section; serve_local.sh starts both stand-in servers on 127.0.0.1 with the API key, -np 3, q8_0 K/V, -fa, and stops them
   CHECK: .venv/bin/python scripts/gate.py local_tooling
   EXPECT: GATE local_tooling OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=ccd785b942caca7f4112a01bddfc3106c055ee8d12583842321cabdb8fd56413; exit=0; EXPECT=matched; output-sha256=bf75302bd00861de4d7aed4c7564cc6a849270def24691fbd84d419cb6f4a6f4; output-bytes=123; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=ccd785b942caca7f4112a01bddfc3106c055ee8d12583842321cabdb8fd56413; exit=0; EXPECT=matched; output-sha256=e096b0650309fdb6ab2d5cefa9bb53b8b4e765d7cb55d53dc730e8dcc58fa3f1; output-bytes=123; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [x] G27: Keys without the pii_filter permission (the default) cannot filter on PII columns on any path (validator, agent analytics incl. Mercer sandbox, REST sql/run, exports), while a permitted key gets bucketed counts
   CHECK: .venv/bin/python scripts/gate.py pii_filter
   EXPECT: GATE pii_filter OK
-  EVIDENCE: automatic-evidence=v1; definition-sha256=02a10149d814827fde7fe54bbf50337b10753ae260a4002dd243b1c2034c55d0; exit=0; EXPECT=matched; output-sha256=98d31b352c7a4032cf9c27dcdb6e44ff9e7454f449a2b880fda51f334cd2e979; output-bytes=136; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=02a10149d814827fde7fe54bbf50337b10753ae260a4002dd243b1c2034c55d0; exit=0; EXPECT=matched; output-sha256=a6e0634103e100b8155b39922709c60f829fbf77111f706b6a5cf85a1ae6e651; output-bytes=136; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
+
+- [x] G28: Plug in data: admin-only /admin + /v1/admin/* and `bankql import|connect|remove-source` import CSV/TSV/Parquet and connect databases as read-only sources saved only when check-source passes (writable Postgres role refused, nothing written), PII columns flagged, uploads capped, sources.yaml never shadowed, and imported sources answer through analytics
+  CHECK: .venv/bin/python scripts/gate.py onboarding
+  EXPECT: GATE onboarding OK
+  EVIDENCE: automatic-evidence=v1; definition-sha256=1a3eaa1533216e42421e397dfa9e56ccd404f23ba0fad9c17e2fa3f927dd7b65; exit=0; EXPECT=matched; output-sha256=fd29c43ca8777acbcc48c1dbee9eaa7b98f6fc48fe200cdd7eff2e3ab2eba850; output-bytes=121; shell=/bin/sh; cwd=/home/user/bankql-repo; path=7f4fb4b02918/15 entries
 
 - [ ] G25: A (real BIRD data): bird_financial loaded in SQLite/DuckDB/Postgres and the suite re-run against it
   CHECK: .venv/bin/python scripts/gate.py bird

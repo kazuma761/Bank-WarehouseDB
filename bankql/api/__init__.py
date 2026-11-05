@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import tempfile
 import threading
 import time
 import uuid
@@ -16,12 +17,20 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+import anyio
+
+from bankql import onboarding
 from bankql.agent import Agent, AskResult
 from bankql.auth import Forbidden, KeyStore, Principal, RateLimited
+from bankql.config import local_sources
 from bankql.connectors import QueryRejected, QueryTimeout, jsonable
 
 MODEL_NAME = "bankql"
 DEMO_HTML = (Path(__file__).parent / "demo.html").read_text(encoding="utf-8")
+ADMIN_HTML = (Path(__file__).parent / "admin.html").read_text(encoding="utf-8")
+PAGE_HEADERS = {"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+                "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                                           "connect-src 'self'; frame-ancestors 'none'"}
 CHAT_PREVIEW_ROWS = 20
 
 
@@ -33,6 +42,13 @@ class AskRequest(BaseModel):
     user_id: str | None = Field(default=None, max_length=200,
                                 description="Reserved for the per-user permissions phase: accepted and audited, not yet enforced.")
     stream: bool = False
+
+
+class ConnectRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    url: str = Field(min_length=1, max_length=2000, description="SQLAlchemy URL; stored only in .env")
+    tables: list[str] | None = Field(default=None, description="allowlist; default: every table the URL shows")
+    description: str = Field(default="", max_length=300)
 
 
 class SqlRequest(BaseModel):
@@ -78,9 +94,11 @@ def create_app(agent: Agent, keys: KeyStore | None = None) -> FastAPI:
 
     @app.get("/demo", include_in_schema=False)
     def demo():
-        return HTMLResponse(DEMO_HTML, headers={"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
-                                                "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; "
-                                                "style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'"})
+        return HTMLResponse(DEMO_HTML, headers=PAGE_HEADERS)
+
+    @app.get("/admin", include_in_schema=False)
+    def admin_page():  # static page; every action it takes needs an admin key
+        return HTMLResponse(ADMIN_HTML, headers=PAGE_HEADERS)
 
     @app.get("/health")
     def health():
@@ -168,6 +186,80 @@ def create_app(agent: Agent, keys: KeyStore | None = None) -> FastAPI:
         return FileResponse(path, media_type="text/csv" if fmt == "csv" else "application/vnd.apache.parquet",
                             filename=f"bankql-{export_id}.{fmt}")
 
+    # ---------------------------------------------------------------------------------- plug in data (admin)
+
+    def admin(p: Principal = Depends(principal)) -> Principal:
+        if not p.policy.admin:
+            raise HTTPException(403, "admin permission required (BANKQL_ADMIN_KEYS, or admin: true in config/api_keys.yaml)")
+        return p
+
+    def onboarded(p: Principal, action: str, r, t0: float) -> dict:
+        agent.audit.write(request_id=uuid.uuid4().hex, surface=f"admin:{p.key_id}", source=r.name, route="admin",
+                          intent=action, row_count=len(r.tables), latency_ms=round((time.perf_counter() - t0) * 1000, 1),
+                          refused=not r.ok, refusal_reason=None if r.ok else "check-source failed")
+        body = {"name": r.name, "ok": r.ok, "tables": r.tables, "semantic_files": r.semantic_files,
+                "checks": [{"status": s, "check": c, "detail": d} for s, c, d in r.checks]}
+        if not r.ok:
+            raise HTTPException(400, body)
+        return body
+
+    @app.exception_handler(onboarding.OnboardError)
+    async def _bad_input(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.get("/v1/admin/sources")
+    def admin_sources(p: Principal = Depends(admin)):
+        local = local_sources(agent._config_dir())
+        return [{"name": n, "dialect": s.dialect, "description": s.cfg.description, "tables": list(s.cfg.tables),
+                 "origin": (local.get(n) or {}).get("origin", "config")} for n, s in agent.sources.items()]
+
+    @app.post("/v1/admin/sources/inspect")
+    async def admin_inspect(req: ConnectRequest, p: Principal = Depends(admin)):
+        onboarding.check_name(agent._config_dir(), req.name)
+        dialect, tables, checks = await anyio.to_thread.run_sync(lambda: onboarding.inspect_url(req.name, req.url))
+        return {"dialect": dialect, "tables": tables,
+                "checks": [{"status": s, "check": c, "detail": d} for s, c, d in checks]}
+
+    @app.post("/v1/admin/sources")
+    async def admin_connect(req: ConnectRequest, p: Principal = Depends(admin)):
+        t0 = time.perf_counter()
+        r = await anyio.to_thread.run_sync(lambda: agent.connect_source(req.name, req.url, req.tables, req.description))
+        return onboarded(p, "connect", r, t0)
+
+    @app.put("/v1/admin/imports/{name}/{filename}",
+             openapi_extra={"requestBody": {"content": {"application/octet-stream": {}}, "required": True}})
+    async def admin_import(name: str, filename: str, request: Request, p: Principal = Depends(admin)):
+        """Raw file body (CSV / TSV / Parquet) → table <file stem> in source <name>; repeat for more files."""
+        onboarding.check_name(agent._config_dir(), name)
+        onboarding.table_name(filename)
+        cap = int(float(os.environ.get("BANKQL_IMPORT_MAX_MB", "500")) * 1024 * 1024)
+        tmp_dir = agent.cfg.path(agent.IMPORTS_DIR) / ".upload"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=tmp_dir, suffix=Path(filename).suffix.lower())
+        try:
+            size = 0
+            with os.fdopen(fd, "wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > cap:
+                        raise HTTPException(413, f"file larger than {cap // 1024 // 1024} MB (BANKQL_IMPORT_MAX_MB)")
+                    f.write(chunk)
+            if size == 0:
+                raise HTTPException(400, "empty file")
+            t0 = time.perf_counter()
+            r = await anyio.to_thread.run_sync(lambda: agent.import_file(name, filename, Path(tmp)))
+            return onboarded(p, "import", r, t0)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    @app.delete("/v1/admin/sources/{name}")
+    def admin_remove(name: str, p: Principal = Depends(admin)):
+        if not agent.remove_source(name):
+            raise HTTPException(404, "no plugged-in source with that name")
+        agent.audit.write(request_id=uuid.uuid4().hex, surface=f"admin:{p.key_id}", source=name, route="admin",
+                          intent="remove", refused=False)
+        return {"removed": name}
+
     # ---------------------------------------------------------------------------------- OpenAI-compatible
 
     @app.get("/v1/models")
@@ -187,8 +279,6 @@ def create_app(agent: Agent, keys: KeyStore | None = None) -> FastAPI:
             raise HTTPException(400, "the last message must be from the user")
         question = _text(msgs[-1]["content"])
         history = [{"role": m["role"], "content": _text(m["content"])} for m in msgs[:-1]][-12:]
-        import anyio
-
         src = allowed_src(p, source)
         r = await anyio.to_thread.run_sync(lambda: agent.ask(question, src.name, body.get("user"), history=history,
                                                              surface="openai", principal=p))
