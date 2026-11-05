@@ -161,6 +161,12 @@ scripts/demo.sh
 Open `http://127.0.0.1:8000/demo`. The API key is the first value of `BANKQL_API_KEYS` in `.env`. Ctrl-C stops what
 the script started.
 
+### 5.9 Plug in your own data
+
+Open `http://127.0.0.1:8000/admin` (the demo or `uvicorn bankql.api:app` must be running), paste the admin key
+(`BANKQL_ADMIN_KEYS` in `.env`), then import CSV / Parquet files or connect a database with a read-only user.
+Or from the command line: `.venv/bin/bankql import sales sales.csv`. Details: README, "Plug in your own data".
+
 ## 6. Step by step (Path B, PowerShell)
 
 Run from the repo folder, with Docker Desktop running:

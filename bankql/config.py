@@ -68,6 +68,7 @@ class FederationConfig(BaseModel):
 
 class AppConfig(BaseModel):
     root: Path
+    config_dir: Path | None = None
     sources: dict[str, dict]
     federations: dict[str, FederationConfig] = Field(default_factory=dict)
     router: ModelEndpoint
@@ -80,16 +81,27 @@ class AppConfig(BaseModel):
         return q if q.is_absolute() else self.root / q
 
 
+LOCAL_SOURCES = "sources.local.yaml"  # git-ignored; written only by bankql.onboarding
+
+
+def local_sources(config_dir: str | Path) -> dict[str, dict]:
+    p = Path(config_dir) / LOCAL_SOURCES
+    return (yaml.safe_load(p.read_text()) or {}).get("sources", {}) if p.exists() else {}
+
+
 def load_config(config_dir: str | Path = "config") -> AppConfig:
     cdir = Path(config_dir).resolve()
     root = cdir.parent
     load_dotenv(root / ".env")
     src = yaml.safe_load((cdir / "sources.yaml").read_text())
     models = yaml.safe_load((cdir / "models.yaml").read_text())
-    for name, s in src.get("sources", {}).items():
+    src.setdefault("sources", {})
+    for name, s in local_sources(cdir).items():  # added through /admin or `bankql import|connect`
+        src["sources"].setdefault(name, s)  # never shadows a source from sources.yaml
+    for name, s in src["sources"].items():
         s["semantic"] = [str((cdir / p).resolve()) for p in s.get("semantic", [])]
     for key, env in (("hf_repo", "BANKQL_ROUTER_HF_REPO"), ("hf_file", "BANKQL_ROUTER_HF_FILE")):
         if os.environ.get(env):
             models["router"][key] = os.environ[env]
-    return AppConfig(root=root, sources=src.get("sources", {}), federations=src.get("federations") or {},
+    return AppConfig(root=root, config_dir=cdir, sources=src.get("sources", {}), federations=src.get("federations") or {},
                      router=models["router"], sql=models["sql"], agent=models.get("agent", {}))

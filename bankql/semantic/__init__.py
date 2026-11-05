@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _filled(text: str) -> bool:
+    """`bankql init-source` skeletons say TODO where a human still has to write something: never use that text."""
+    return not str(text).strip().upper().startswith("TODO")
 
 
 class Column(BaseModel):
@@ -15,12 +20,27 @@ class Column(BaseModel):
     value_aliases: dict[str, str] = Field(default_factory=dict)  # phrase -> SQL condition
     pii: bool = False
 
+    @field_validator("description")
+    @classmethod
+    def _no_todo(cls, v: str) -> str:
+        return v if _filled(v) else ""
+
+    @field_validator("valid_values")
+    @classmethod
+    def _no_todo_codes(cls, v: dict) -> dict:
+        return {k: m for k, m in v.items() if _filled(m)}
+
 
 class Table(BaseModel):
     description: str = ""
     columns: dict[str, Column] = Field(default_factory=dict)
     time_column: str | None = None  # large-table flags live per source in sources.yaml
     optional: bool = False  # may be absent from a source (e.g. synthetic client_profile)
+
+    @field_validator("description")
+    @classmethod
+    def _no_todo(cls, v: str) -> str:
+        return v if _filled(v) else ""
 
     def column(self, name: str) -> Column | None:
         """Case-insensitive: Postgres folds unquoted A2 to a2."""
@@ -39,6 +59,11 @@ class SemanticModel(BaseModel):
     joins: list[list[str]] = Field(default_factory=list)
     glossary: dict[str, str] = Field(default_factory=dict)
     metrics: dict[str, Metric] = Field(default_factory=dict)
+
+    @field_validator("description")
+    @classmethod
+    def _no_todo(cls, v: str) -> str:
+        return v if _filled(v) else ""
 
     def table(self, name: str) -> Table | None:
         return self.tables.get(name) or next((t for k, t in self.tables.items() if k.lower() == name.lower()), None)

@@ -335,8 +335,11 @@ def build_sources(cfg, guard: SqlasGuard | None = None) -> dict[str, Source]:
     from bankql.semantic import load_semantic
 
     guard = guard or SqlasGuard()
-    out = {}
-    for name, raw in cfg.sources.items():
-        sc = SourceConfig.model_validate(raw)
-        out[name] = Source(name, sc, load_semantic(sc.semantic), guard)
-    return out
+    return {name: build_source(name, raw, guard) for name, raw in cfg.sources.items()}
+
+
+def build_source(name: str, raw: dict, guard: SqlasGuard | None = None) -> Source:
+    from bankql.semantic import load_semantic
+
+    sc = SourceConfig.model_validate(raw)
+    return Source(name, sc, load_semantic(sc.semantic), guard)

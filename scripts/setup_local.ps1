@@ -24,6 +24,7 @@ foreach ($k in "BANKQL_LLAMA_API_KEY", "BANKQL_REDIS_PASSWORD", "BANKQL_PG_ADMIN
   if ($cur -notmatch "(?m)^$k=") { SetEnv $k (Rand) }
 }
 if ($cur -match "(?m)^BANKQL_API_KEYS=change-me") { SetEnv "BANKQL_API_KEYS" "local-$(Rand)" }
+if ($cur -notmatch "(?m)^BANKQL_ADMIN_KEYS=.+") { SetEnv "BANKQL_ADMIN_KEYS" "admin-$(Rand)" }  # /admin: plug in data
 Get-Content .env | Where-Object { $_ -match "^[A-Z_]+=" } | ForEach-Object { $k, $v = $_ -split "=", 2; Set-Item "env:$k" $v }
 $admin = $env:BANKQL_PG_ADMIN_PASSWORD; $ro = $env:BANKQL_PG_RO_PASSWORD
 SetEnv "BANKQL_PG_ADMIN_URL" "postgresql+psycopg://bankql_admin:$admin@127.0.0.1:5432/bankql_fixture"
@@ -64,3 +65,4 @@ Step "Check every source (read-only is inspected, never tested by writing)"
 $sources = @("financial", "bank_demo", "bank_pg"); if (-not $SkipBird) { $sources += @("bird_financial", "bird_demo", "bird_pg") }
 foreach ($s in $sources) { Write-Host "-- $s"; .venv\Scripts\bankql check-source $s; if ($LASTEXITCODE -ne 0) { Write-Host "!! $s has FAIL lines above" } }
 Write-Host "`nSetup done. Next: scripts\serve_local.ps1 -Detach   then   scripts\eval_local.ps1"
+Write-Host "Your own data: http://127.0.0.1:8000/admin (admin key: BANKQL_ADMIN_KEYS in .env), or: .venv\Scripts\bankql import <name> file.csv"

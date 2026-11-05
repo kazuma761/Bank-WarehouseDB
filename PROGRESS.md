@@ -6,6 +6,16 @@ Running log. Acceptance gates live in `GATES.md` (checked with
 
 ## Status
 
+### Round 4 (2026-11-05: plug in your own data)
+
+| Item | State |
+|---|---|
+| `/admin` page + `/v1/admin/*` (import CSV / TSV / Parquet into DuckDB; connect a database by URL; remove) — admin keys only | done; tested (API + Playwright walkthrough of /admin and /demo with FakeLLM) |
+| `bankql import / connect / remove-source` | done + test |
+| Saved only when `check-source` passes (writable roles refused); semantic skeleton per table with PII flags; `TODO` placeholders ignored when loading | done + tests |
+| Plugged-in sources skip the bank router (analytics only); Mercer schema cache keyed by live columns | done + tests |
+| `/demo`: keeps the chosen source when the list reloads; `?source=` preselects | fixed (found in the browser walkthrough) |
+
 ### Round 3 (2026-11-04: local GPU handoff, PII-filter permission)
 
 | Item | State |
@@ -141,3 +151,7 @@ Each item says exactly what unblocks it.
 12. **Small-count rule follow-ups:** query budgets or DP noise for PII-filtered counts (differencing attacks);
     lineage-aware output check so CTE-wrapped counts are not falsely refused (docs/SECURITY.md).
 13. **Scale-out:** move the rate limiter and sessions to Redis before running more than one API worker.
+14. **Plugged-in data, next steps.** Excel files (save as CSV for now); several API workers would each need a
+   restart to see sources added by another worker or by the CLI (one worker reloads on `/admin` changes); a
+   router prompt for non-bank sources so they get "unsupported" and clarification handling instead of going
+   straight to analytics; large-table guards for imported tables are set by hand in `sources.local.yaml`.

@@ -182,6 +182,12 @@ class MercerEngine:
         self._schemas: dict[str, AnnotatedSchema] = {}
         self._cache: dict = {}
 
+    def forget(self, source_name: str) -> None:
+        """Drop per-source state after the source was re-plugged (bankql.onboarding)."""
+        self._schemas.pop(source_name, None)
+        for k in [k for k in self._cache if k[1] == source_name]:
+            del self._cache[k]
+
     # --- schema: our allowlisted catalog + semantic joins as FKs + Mercer's value sampling + Mercer's mapper
     def schema_for(self, source: Source) -> AnnotatedSchema:
         if source.name not in self._schemas:
@@ -192,7 +198,8 @@ class MercerEngine:
         from bankql.analytics.mercer.schema.introspector import _sample_values_for_tables
         from bankql.analytics.mercer.schema.semantic_mapper import SemanticMapper
 
-        key = hashlib.sha256(f"{source.name}|{source.cfg.url_env}|{sorted(source.cfg.tables)}|"
+        cols = sorted((m.name, tuple(m.columns)) for m in source.catalog.tables.values())  # re-imported table → new key
+        key = hashlib.sha256(f"{source.name}|{source.cfg.url_env}|{sorted(source.cfg.tables)}|{cols}|"
                              f"{source.semantic.model_dump_json()}".encode()).hexdigest()[:16]
         if self.schema_cache is not None:
             try:

@@ -23,7 +23,8 @@ from pydantic import BaseModel, Field
 from bankql.audit import AuditLog
 from bankql.auth import LIBRARY, Forbidden, Principal, RateLimited, RateLimiter
 from bankql.config import AppConfig, load_config
-from bankql.connectors import QueryRejected, QueryTimeout, Source, build_sources, jsonable
+from bankql import onboarding
+from bankql.connectors import QueryRejected, QueryTimeout, Source, build_source, build_sources, jsonable
 from bankql.connectors.federation import build_federations
 from bankql.export import Exporter
 from bankql.guardrails import SqlasGuard, looks_like_injection, unmasked_contact
@@ -32,7 +33,7 @@ from bankql import perf
 from bankql.privacy import Scrubber
 from bankql.verified import VerifiedQueries
 from bankql.resolver import Resolver
-from bankql.router import Router, ToolCall, resolve_period, ungrounded_numbers
+from bankql.router import Router, RouterDecision, ToolCall, resolve_period, ungrounded_numbers
 from bankql.tools import LookupTools, ToolError, ToolResult
 
 NOT_SURE = "I'm not sure"
@@ -127,6 +128,7 @@ class Agent:
         self.limiter = RateLimiter()
         self.verified = verified if verified is not None else (
             VerifiedQueries(cfg.path(cfg.agent.verified_cache_path)) if cfg.agent.verified_cache else None)
+        self._admin_lock = threading.Lock()
 
     @classmethod
     def from_config(cls, config_dir: str | Path = "config", **kw) -> "Agent":
@@ -136,6 +138,60 @@ class Agent:
         if name not in self.sources:
             raise KeyError(f"unknown source {name!r}; available: {', '.join(self.sources)}")
         return self.sources[name]
+
+    # ------------------------------------------------------------------------- plug in data (bankql.onboarding)
+
+    IMPORTS_DIR = "data/imports"
+
+    def import_file(self, name: str, filename: str, path: Path) -> onboarding.Onboarded:
+        """Load one CSV / TSV / Parquet file as a table of source `name` (created on first import)."""
+        cdir = self._config_dir()
+        with self._admin_lock:
+            onboarding.check_name(cdir, name)
+            self._drop(name)  # release the DuckDB file before writing to it
+            try:
+                db, _ = onboarding.import_file(cdir, self.cfg.path(self.IMPORTS_DIR), name, filename, path)
+                return onboarding.register(cdir, self.cfg.root / ".env", name, f"duckdb:///{db}", origin="import")
+            finally:
+                self._plug(name)
+
+    def connect_source(self, name: str, url: str, tables: list[str] | None = None,
+                       description: str = "") -> onboarding.Onboarded:
+        cdir = self._config_dir()
+        with self._admin_lock:
+            onboarding.check_name(cdir, name)
+            self._drop(name)
+            try:
+                return onboarding.register(cdir, self.cfg.root / ".env", name, url, origin="connect", tables=tables,
+                                           description=description)
+            finally:
+                self._plug(name)
+
+    def remove_source(self, name: str) -> bool:
+        cdir = self._config_dir()
+        with self._admin_lock:
+            onboarding.check_name(cdir, name)
+            self._drop(name)
+            return onboarding.remove(cdir, self.cfg.root / ".env", name)
+
+    def _config_dir(self) -> Path:
+        return self.cfg.config_dir or self.cfg.root / "config"
+
+    def _drop(self, name: str) -> None:
+        old = self.sources.pop(name, None)
+        self.cfg.sources.pop(name, None)
+        if old is not None and "engine" in old.__dict__:
+            old.engine.dispose()
+        for cache in (self._tools, self._resolvers, self._scrubbers):
+            cache.pop(name, None)
+        if hasattr(self.engine, "forget"):
+            self.engine.forget(name)
+
+    def _plug(self, name: str) -> None:
+        raw = load_config(self._config_dir()).sources.get(name)
+        if raw is not None:
+            self.cfg.sources[name] = raw
+            self.sources[name] = build_source(name, raw, self.guard)
 
     def tools(self, name: str) -> LookupTools:
         if name not in self._tools:
@@ -199,8 +255,11 @@ class Agent:
                     self._output_guard(res, src)
                 res.status = "ok"
                 raise _Done
-            with timer("router"):
-                d = self.router.route(res.standalone_question)
+            if _has_lookup_tables(src):
+                with timer("router"):
+                    d = self.router.route(res.standalone_question)
+            else:  # plugged-in data: the router and its lookup tools are bank-specific, so every question is analytics
+                d = RouterDecision("analytics", confidence=1.0, reason="this source has no lookup tables")
             res.confidence, res.warnings = round(d.confidence, 4), res.warnings + d.warnings
             res.router = {"intent": d.intent, "tools": [{"tool": t.tool, "args": t.args()} for t in d.tools],
                           "self_confidence": d.self_confidence, "logprob_confidence": d.logprob_confidence, "reason": d.reason}
@@ -482,6 +541,16 @@ def _history_text(res: "AskResult") -> str:
         ids = [str(c.get("client_id") or c.get("account_id")) for c in res.choices]
         return f"I asked the user to choose one of: {', '.join(ids)}."
     return res.summary
+
+
+LOOKUP_TABLES = {"client", "disp", "account"}
+
+
+def _has_lookup_tables(src: Source) -> bool:
+    try:
+        return LOOKUP_TABLES <= {name.lower() for _, name in src.catalog.tables}
+    except Exception:  # noqa: BLE001 — unreachable source: let the normal path report it
+        return True
 
 
 def _lookup_summary(r: ResultSet) -> str:
