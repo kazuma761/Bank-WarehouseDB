@@ -89,6 +89,8 @@ constant-time comparison, fail closed when unset). Docker: `Dockerfile` + `docke
 
 ## Run locally on GPU (RTX 4080 Super, 16 GB)
 
+Full walkthrough (packages, Linux/WSL2/Windows, troubleshooting, a prompt to hand to a coding agent): [docs/RUN_ON_PC.md](docs/RUN_ON_PC.md).
+
 Real models and real BIRD data run on your workstation; the cloud session only had synthetic data and FakeLLM.
 Both models stay resident: Gemma 12B Q4_K_M (~7.3 GB) + Arctic-Text2SQL-R1-7B IQ4_XS (~4.2 GB) + KV caches fit in
 16 GB with Arctic's q8_0 cache.
