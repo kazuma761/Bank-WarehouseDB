@@ -32,7 +32,8 @@
 <body>
 <main>
   <h1>BankQL</h1>
-  <p class="sub">Ask about the bank data. Answers come straight from the database; the SQL used is shown.</p>
+  <p class="sub">Ask about the bank data. Answers come straight from the database; the SQL used is shown.
+    <a href="/admin" style="color:var(--accent)">Add your own data</a></p>
   <form id="f">
     <input id="q" placeholder="e.g. show client 12's accounts — or — how many loans are in debt?" autocomplete="off" required>
     <select id="source"></select>
@@ -62,7 +63,9 @@ function headers() { return { "content-type": "application/json", "X-API-Key": $
 async function loadSources() {
   const r = await fetch("/v1/sources", { headers: headers() });
   if (!r.ok) return;
+  const want = $("source").value || new URLSearchParams(location.search).get("source");  // keep the choice on reload
   $("source").replaceChildren(...(await r.json()).filter(s => s.available !== false).map(s => { const o = el("option", s.name); o.value = s.name; return o; }));
+  if (want && [...$("source").options].some(o => o.value === want)) $("source").value = want;
 }
 $("key").addEventListener("change", () => { store.set("bankql_key", $("key").value); loadSources(); });
 $("reset").addEventListener("click", () => { sessionId = newSession(); showSession(); $("log").replaceChildren(); });

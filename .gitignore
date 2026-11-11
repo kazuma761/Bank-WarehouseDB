@@ -24,3 +24,7 @@ bankql.bundle
 /data/bird
 /eval/datasets/lookup_bird.jsonl
 /data/mercer_mappings.yaml
+# plugged-in data (/admin, bankql import|connect)
+/config/sources.local.yaml
+/config/semantic/local/
+/data/imports/

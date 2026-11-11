@@ -183,6 +183,11 @@ UI. Name *lookups* ("show Rahul Sharma's accounts") are unaffected: the resolver
 
 ## Part 2 — BankQL → your databases
 
+**Quickest:** the `/admin` page or `bankql import <name> FILE…` / `bankql connect <name>` (README, "Plug in your own
+data") do everything below for one source: URL into `.env`, a `config/sources.local.yaml` entry, semantic
+skeletons, and `check-source` — the source is saved only if no check FAILs. Use the manual steps below for sources
+you want in version control, for large-table guards, or for federation.
+
 Every source in `config/sources.yaml` reads its SQLAlchemy URL from an **environment variable** (`url_env`) —
 credentials never go in YAML. After adding one, run:
 
@@ -318,6 +323,9 @@ container reaches it at `host.docker.internal`. CPU-only hosts can run one model
 |---|---|
 | `BANKQL_API_KEYS` | comma-separated API keys (default policy) |
 | `BANKQL_CONFIG_DIR` | config directory (default `config`) |
+| `BANKQL_ADMIN_KEYS` | comma-separated admin keys: default policy plus adding / importing / removing sources (`/admin`) |
+| `BANKQL_IMPORT_MAX_MB` | largest file `/admin` accepts for import (default 500) |
+| `BANKQL_SRC_<NAME>_URL` | URL of a source added through `/admin` or `bankql import / connect` (written to `.env`) |
 | `BANKQL_ROUTER_URL`, `BANKQL_SQL_URL` | llama-server endpoints (default `http://localhost:8080/v1`, `:8081/v1`) |
 | `BANKQL_LLAMA_API_KEY` | key both llama-servers require |
 | `BANKQL_ROUTER_HF_REPO`, `BANKQL_ROUTER_HF_FILE` | override the Gemma GGUF named in `config/models.yaml` |

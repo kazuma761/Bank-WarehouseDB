@@ -3,6 +3,10 @@
     bankql check-source <name>     connectivity, read-only enforcement (inspected, never by writing), timeout, tables
     bankql init-source <name>      semantic YAML skeleton from the live schema (TODO descriptions to fill in)
     bankql hash-key [--generate]   SHA-256 of an API key (stdin) for config/api_keys.yaml
+    bankql import <name> FILE...   CSV / TSV / Parquet files → new read-only source <name> (local DuckDB)
+    bankql connect <name>          existing database → new source (URL asked for, stored only in .env)
+    bankql remove-source <name>    forget a source added by import / connect (data files stay)
+Sources added this way are picked up by the API on restart; /admin adds them to a running API.
 """
 from __future__ import annotations
 
@@ -104,6 +108,9 @@ def check_source(src: Source) -> list[tuple[str, str, str]]:
                                                f"(configured {src.cfg.statement_timeout_s:g}s)"))
     except Exception as e:  # noqa: BLE001
         res.append((WARN, "statement timeout", f"could not test ({type(e).__name__}: {str(e)[:120]})"))
+    finally:
+        if "engine" in quick.__dict__:
+            quick.engine.dispose()
     return res
 
 
@@ -159,7 +166,18 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--force", action="store_true", help="overwrite an existing file")
     h = sub.add_parser("hash-key", help="print the SHA-256 to put in config/api_keys.yaml (reads the key from stdin)")
     h.add_argument("--generate", action="store_true", help="generate a new random key, print key and hash")
+    im = sub.add_parser("import", help="import CSV / TSV / Parquet files as a new read-only source")
+    im.add_argument("name")
+    im.add_argument("files", nargs="+")
+    cn = sub.add_parser("connect", help="add an existing database as a source (asks for the URL)")
+    cn.add_argument("name")
+    cn.add_argument("--tables", help="comma-separated allowlist (default: all tables)")
+    cn.add_argument("--description", default="")
+    rm = sub.add_parser("remove-source", help="forget a source added by import / connect")
+    rm.add_argument("name")
     a = ap.parse_args(argv)
+    if a.cmd in ("import", "connect", "remove-source"):
+        return _onboard(a)
     if a.cmd == "hash-key":
         import secrets
 
@@ -189,6 +207,39 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{out} exists; use --force to overwrite", file=sys.stderr)
         return 1
     print(init_source(src, out))
+    return 0
+
+
+def _onboard(a) -> int:
+    from bankql import onboarding
+
+    cfg = load_config(a.config)
+    cdir, env = cfg.config_dir, cfg.root / ".env"
+    try:
+        if a.cmd == "remove-source":
+            ok = onboarding.remove(cdir, env, a.name)
+            print(f"removed {a.name}" if ok else f"{a.name}: not a source added by import / connect", file=None if ok else sys.stderr)
+            return 0 if ok else 1
+        if a.cmd == "import":
+            for f in a.files:
+                onboarding.import_file(cdir, cfg.path("data/imports"), a.name, f, Path(f).resolve())
+            db = cfg.path("data/imports").resolve() / f"{a.name}.duckdb"
+            r = onboarding.register(cdir, env, a.name, f"duckdb:///{db}", origin="import")
+        else:
+            import getpass
+
+            url = getpass.getpass("database URL (SQLAlchemy, read-only user): ") if sys.stdin.isatty() else sys.stdin.readline().strip()
+            tables = [t.strip() for t in a.tables.split(",") if t.strip()] if a.tables else None
+            r = onboarding.register(cdir, env, a.name, url, origin="connect", tables=tables, description=a.description)
+    except onboarding.OnboardError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    for status, what, detail in r.checks:
+        print(f"{status}  {what:42} {detail}")
+    if not r.ok:
+        print(f"not saved: {a.name} has FAIL lines above", file=sys.stderr)
+        return 1
+    print(f"\nadded source {a.name}: {', '.join(r.tables)}\nreview: " + ", ".join(f"config/{f}" for f in r.semantic_files))
     return 0
 
 

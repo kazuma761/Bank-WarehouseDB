@@ -27,6 +27,7 @@ uv sync --frozen
 grep -q "^BANKQL_LLAMA_API_KEY=" .env || set_env BANKQL_LLAMA_API_KEY "$(rand)"
 grep -q "^BANKQL_REDIS_PASSWORD=" .env || set_env BANKQL_REDIS_PASSWORD "$(rand)"
 grep -q "^BANKQL_API_KEYS=change-me" .env && set_env BANKQL_API_KEYS "local-$(rand)"
+grep -q "^BANKQL_ADMIN_KEYS=..*" .env || set_env BANKQL_ADMIN_KEYS "admin-$(rand)"  # /admin: plug in data
 . scripts/env.sh
 set_env BANKQL_REDIS_URL "redis://:${BANKQL_REDIS_PASSWORD}@127.0.0.1:6379/0"
 
@@ -76,3 +77,4 @@ done
 
 echo
 echo "Setup done. Next:  scripts/serve_local.sh --detach   then   scripts/eval_local.sh"
+echo "Your own data: http://127.0.0.1:8000/admin (admin key: BANKQL_ADMIN_KEYS in .env), or: .venv/bin/bankql import <name> file.csv"

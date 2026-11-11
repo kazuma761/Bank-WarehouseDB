@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BankQL data sources</title>
+<style>
+  :root { --bg:#fafaf9; --fg:#1c1917; --muted:#78716c; --line:#e7e5e4; --card:#fff; --accent:#0f766e; --bad:#b91c1c; --warn:#a16207; --code:#f5f5f4; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1c1917; --fg:#f5f5f4; --muted:#a8a29e; --line:#44403c; --card:#292524; --accent:#5eead4; --bad:#fca5a5; --warn:#fcd34d; --code:#1f1d1b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 0 0 4px; }
+  .sub, .hint { color: var(--muted); margin: 0 0 16px; } .hint { font-size: 13px; margin: 0 0 12px; }
+  a { color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  input, button { font: inherit; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--fg); }
+  input[type=file] { padding: 6px; max-width: 100%; } .grow { flex: 1 1 320px; min-width: 0; }
+  button { background: var(--accent); color: var(--bg); border: 0; cursor: pointer; font-weight: 600; }
+  button[disabled] { opacity: .6; cursor: wait; } .ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 400; }
+  .tablewrap { overflow-x: auto; margin: 8px 0; }
+  table { border-collapse: collapse; font-size: 13px; width: 100%; } th, td { border-bottom: 1px solid var(--line); padding: 5px 10px; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .PASS { color: var(--accent); font-weight: 600; } .WARN { color: var(--warn); font-weight: 600; } .FAIL, .err { color: var(--bad); font-weight: 600; }
+  .out { margin-top: 12px; font-size: 14px; } .out:empty { display: none; }
+  .tables label { display: inline-block; margin: 0 12px 6px 0; font-size: 14px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  ul { margin: 6px 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Data sources</h1>
+  <p class="sub">Plug in your own data, then <a href="/demo">ask questions about it</a>. BankQL only ever reads it.</p>
+
+  <div class="card">
+    <form onsubmit="return false">
+      <input id="key" class="grow" type="password" placeholder="Admin API key (BANKQL_ADMIN_KEYS in .env)" autocomplete="off">
+      <button id="refresh" type="button" class="ghost">Load sources</button>
+    </form>
+    <div id="sources" class="out"></div>
+  </div>
+
+  <div class="card">
+    <h2>Import files</h2>
+    <p class="hint">CSV, TSV or Parquet. Each file becomes one table in a new local DuckDB database. Importing a file with
+      the same name again replaces that table. Save Excel sheets as CSV first.</p>
+    <form id="imp">
+      <input id="impName" placeholder="source name, e.g. sales" pattern="[a-z][a-z0-9_]{0,39}" required>
+      <input id="files" class="grow" type="file" multiple accept=".csv,.tsv,.parquet" required>
+      <button id="impGo">Import</button>
+    </form>
+    <div id="impOut" class="out"></div>
+  </div>
+
+  <div class="card">
+    <h2>Connect a database</h2>
+    <p class="hint">A SQLAlchemy URL, e.g. <code>postgresql+psycopg://reader:pass@host:5432/db</code> or
+      <code>sqlite:////path/file.sqlite</code>. Use a <b>read-only</b> database user: a user that can write is refused.
+      The URL is stored only in <code>.env</code>.</p>
+    <form id="con">
+      <input id="conName" placeholder="source name, e.g. crm" pattern="[a-z][a-z0-9_]{0,39}" required>
+      <input id="url" class="grow" type="password" placeholder="database URL" autocomplete="off" required>
+      <button id="conGo">Check connection</button>
+    </form>
+    <div id="conOut" class="out"></div>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const store = { get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+                set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} } };
+$("key").value = store.get("bankql_admin_key") || "";
+$("key").addEventListener("change", () => { store.set("bankql_admin_key", $("key").value); loadSources(); });
+
+function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = String(text); if (cls) e.className = cls; return e; }
+function hdr(extra) { return Object.assign({ "X-API-Key": $("key").value }, extra || {}); }
+async function call(method, path, body, ctype) {
+  const r = await fetch(path, { method, headers: hdr(ctype ? { "content-type": ctype } : {}), body });
+  let data = null; try { data = await r.json(); } catch {}
+  if (!r.ok) { const d = data && data.detail; const e = new Error(typeof d === "string" ? d : (d && d.checks ? "checks failed" : r.status + " " + r.statusText)); e.detail = d; throw e; }
+  return data;
+}
+function table(head, rows) {
+  const w = el("div", null, "tablewrap"), t = el("table"), tr = el("tr");
+  head.forEach((h) => tr.appendChild(el("th", h))); t.appendChild(tr);
+  rows.forEach((r) => { const row = el("tr"); r.forEach((c) => row.appendChild(c instanceof Node ? (() => { const td = el("td"); td.appendChild(c); return td; })() : el("td", c))); t.appendChild(row); });
+  w.appendChild(t); return w;
+}
+function checks(list) { return table(["", "check", "detail"], (list || []).map((c) => [el("span", c.status, c.status), c.check, c.detail])); }
+function result(out, r) {
+  out.replaceChildren();
+  out.appendChild(el("p", (r.ok ? "Ready: " : "Not saved: ") + r.name + " with " + r.tables.length + " table(s): " + r.tables.join(", "), r.ok ? "PASS" : "err"));
+  if (r.ok) {
+    const p = el("p"); p.append("Next: "); const a = el("a", "ask questions about " + r.name); a.href = "/demo?source=" + encodeURIComponent(r.name); p.append(a, ". ");
+    p.append("For better answers, describe tables and columns and confirm the PII flags in "); r.semantic_files.forEach((f, i) => { p.append(i ? ", " : "", el("code", "config/" + f)); }); p.append(".");
+    out.appendChild(p);
+  }
+  out.appendChild(checks(r.checks));
+}
+function failed(out, e) {
+  out.replaceChildren(el("p", e.message, "err"));
+  if (e.detail && e.detail.checks) result(out, e.detail);
+}
+
+async function loadSources() {
+  const out = $("sources");
+  if (!$("key").value) { out.replaceChildren(el("p", "Enter the admin key to see and change sources.", "hint")); return; }
+  try {
+    const list = await call("GET", "/v1/admin/sources");
+    out.replaceChildren(table(["name", "kind", "tables", ""], list.map((s) => {
+      let action = "";
+      if (s.origin !== "config") {
+        action = el("button", "Remove", "ghost"); action.type = "button";
+        action.onclick = async () => {
+          if (!confirm("Remove source " + s.name + "? Imported files and semantic YAML stay on disk.")) return;
+          try { await call("DELETE", "/v1/admin/sources/" + encodeURIComponent(s.name)); loadSources(); } catch (e) { alert(e.message); }
+        };
+      }
+      return [s.name, s.origin === "config" ? s.dialect + " (sources.yaml)" : s.dialect + " (" + s.origin + ")", s.tables.length + ": " + s.tables.slice(0, 8).join(", ") + (s.tables.length > 8 ? " …" : ""), action];
+    })));
+  } catch (e) { out.replaceChildren(el("p", e.message, "err")); }
+}
+$("refresh").onclick = loadSources;
+
+$("imp").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const out = $("impOut"), name = $("impName").value.trim(), files = [...$("files").files];
+  $("impGo").disabled = true; out.replaceChildren();
+  const log = el("ul"); out.appendChild(log);
+  let last = null;
+  try {
+    for (const f of files) {
+      const li = el("li", "uploading " + f.name + " (" + Math.ceil(f.size / 1024) + " KB) …"); log.appendChild(li);
+      try { last = await call("PUT", "/v1/admin/imports/" + encodeURIComponent(name) + "/" + encodeURIComponent(f.name), f, "application/octet-stream"); li.textContent = f.name + ": imported"; }
+      catch (e) { li.textContent = f.name + ": " + e.message; li.className = "err"; if (e.detail && e.detail.checks) last = e.detail; }
+    }
+    if (last) { const box = el("div"); out.appendChild(box); result(box, last); }
+    loadSources();
+  } finally { $("impGo").disabled = false; }
+};
+
+$("con").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const out = $("conOut"), name = $("conName").value.trim(), url = $("url").value;
+  $("conGo").disabled = true; out.replaceChildren(el("p", "checking …", "hint"));
+  try {
+    const r = await call("POST", "/v1/admin/sources/inspect", JSON.stringify({ name, url }), "application/json");
+    out.replaceChildren(checks(r.checks));
+    if (!r.tables.length) { out.appendChild(el("p", "No tables found (or the connection failed).", "err")); return; }
+    out.appendChild(el("p", "Tables BankQL may read:"));
+    const box = el("div", null, "tables");
+    r.tables.forEach((t) => { const l = el("label"), c = el("input"); c.type = "checkbox"; c.checked = true; c.value = t; l.append(c, " " + t); box.appendChild(l); });
+    out.appendChild(box);
+    const add = el("button", "Add source"); add.type = "button"; out.appendChild(add);
+    add.onclick = async () => {
+      const tables = [...box.querySelectorAll("input:checked")].map((c) => c.value);
+      add.disabled = true;
+      try { result(out, await call("POST", "/v1/admin/sources", JSON.stringify({ name, url, tables }), "application/json")); loadSources(); }
+      catch (e) { failed(out, e); } finally { add.disabled = false; }
+    };
+  } catch (e) { failed(out, e); } finally { $("conGo").disabled = false; }
+};
+loadSources();
+</script>
+</body>
+</html>

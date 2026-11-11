@@ -1,6 +1,6 @@
 """API keys → principals with a policy (source allowlist, run_sql, rate limits).
 
-Keys come from BANKQL_API_KEYS (default policy) and/or config/api_keys.yaml, which stores only SHA-256 hashes:
+Keys come from BANKQL_API_KEYS (default policy), BANKQL_ADMIN_KEYS (default policy + admin) and/or config/api_keys.yaml, which stores only SHA-256 hashes:
 
     defaults: {sources: ["*"], run_sql: false, pii_filter: false, asks_per_minute: 60, lookups_per_minute: 30}
     keys:
@@ -12,6 +12,7 @@ Keys come from BANKQL_API_KEYS (default policy) and/or config/api_keys.yaml, whi
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import hmac
 import os
@@ -33,6 +34,7 @@ class Policy:
     sources: tuple[str, ...] = ("*",)
     run_sql: bool = False
     pii_filter: bool = False  # may filter on PII columns (then only COUNTs, small counts bucketed); default deny
+    admin: bool = False  # may add / import / remove data sources (/admin, /v1/admin/*); default deny
     asks_per_minute: int = 60
     lookups_per_minute: int = 30
 
@@ -77,6 +79,10 @@ class KeyStore:
         for key in (k.strip() for k in os.environ.get("BANKQL_API_KEYS", "").split(",")):
             if key and hash_key(key) not in self._by_hash:
                 self._by_hash[hash_key(key)] = Principal(f"env-{hash_key(key)[:8]}", self.default)
+        admin = dataclasses.replace(self.default, admin=True)
+        for key in (k.strip() for k in os.environ.get("BANKQL_ADMIN_KEYS", "").split(",")):
+            if key:  # an admin key may also ask questions with the default policy
+                self._by_hash[hash_key(key)] = Principal(f"admin-{hash_key(key)[:8]}", admin)
 
     def authenticate(self, key: str | None) -> Principal | None:
         """Constant-time match against every configured hash (no early exit)."""
